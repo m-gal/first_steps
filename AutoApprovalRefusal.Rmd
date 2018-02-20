@@ -1,0 +1,933 @@
+---
+title: "Auto-approval & Auto-refusal clusters."
+output:
+  html_document: default
+  html_notebook: default
+---
+### Кредиты наличными. Без предодобренных.
+#### **Поиск критериев для для отнесения заявки в группу "автоодобрение" или "автоотказ".**
+##### Критерий качества выдач - was.ovd90.12m. 
+
+###### *Галкин Михаил, окт.2017*
+***
+
+```{r loadLibrary, message=FALSE, warning=FALSE, include=FALSE}
+library(knitr)
+library(kableExtra)
+
+library(kohonen)
+library(lightgbm)
+library(data.table)
+library(Matrix)
+library(ggplot2)
+library(gridExtra)
+library(colorRamps)
+library(pals)
+library(partykit)
+library(rpart)
+```
+  
+  
+```{r loadData, message=FALSE, warning=FALSE, include=FALSE}
+rm(list=ls())
+gc()
+# BEG: LOAD DATA
+if (grepl('C:/', getwd()) == 1) {
+  DT.f <- fread(
+    '~/RProjects/201706-UnderOptim/UO.Importance/DTf_importance.csv')
+  DT.full <- fread(
+    '~/RProjects/201706-UnderOptim/UO.Clustering/DT_full.csv',
+    encoding = 'UTF-8')
+  DT.train <- fread(
+    '~/RProjects/201706-UnderOptim/UO.Clustering/DT_train.csv',
+    encoding = 'UTF-8')
+  DT.test <- fread(
+    '~/RProjects/201706-UnderOptim/UO.Clustering/DT_test.csv',
+    encoding = 'UTF-8')  
+  hilo <- fread(
+    '~/RProjects/201706-UnderOptim/UO.Clustering/hilo.csv',
+    encoding = 'UTF-8')
+  res.feat <- fread(
+    '~/RProjects/201706-UnderOptim/UO.Clustering/res_feat.csv',
+    encoding = 'UTF-8')
+  DT.res <- fread(
+    '~/RProjects/201706-UnderOptim/UO.Clustering/DT_res.csv',
+    encoding = 'UTF-8')  
+  lgb.fit <- readRDS.lgb.Booster(
+    '~/RProjects/201706-UnderOptim/UO.Clustering/lgb_fit.rds')
+
+  train <- fread(
+    '~/RProjects/201706-UnderOptim/UO.Clustering/train.csv',
+    encoding = 'UTF-8')
+  f.som <- unlist(fread(header = FALSE,
+    '~/RProjects/201706-UnderOptim/UO.Clustering/f_som.csv',
+    encoding = 'UTF-8'))
+
+  ignor <- unlist(fread(header = FALSE,
+    '~/RProjects/201706-UnderOptim/UO.Clustering/ignor.csv',
+    encoding = 'UTF-8'))
+
+  ref.ttl.source <- fread(
+    '~/RProjects/201706-UnderOptim/UO.Clustering/ref_ttl_source.csv',
+    encoding = 'UTF-8')
+  ref.ttl.reason <- fread(
+    '~/RProjects/201706-UnderOptim/UO.Clustering/ref_ttl_reason.csv',
+    encoding = 'UTF-8')
+} else {
+  DT.f <- fread(
+    'T:/RProjects/201706-UnderOptim/UO.Importance/DTf_importance.csv')
+  DT.full <- fread(
+    'T:/RProjects/201706-UnderOptim/UO.Clustering/DT_full.csv',
+    encoding = 'UTF-8')
+  DT.train <- fread(
+    'T:/RProjects/201706-UnderOptim/UO.Clustering/DT_train.csv',
+    encoding = 'UTF-8')
+  DT.test <- fread(
+    'T:/RProjects/201706-UnderOptim/UO.Clustering/DT_test.csv',
+    encoding = 'UTF-8')  
+  hilo <- fread(
+    'T:/RProjects/201706-UnderOptim/UO.Clustering/hilo.csv',
+    encoding = 'UTF-8')
+  res.feat <- fread(
+    'T:/RProjects/201706-UnderOptim/UO.Clustering/res_feat.csv',
+    encoding = 'UTF-8')
+  DT.res <- fread(
+    'T:/RProjects/201706-UnderOptim/UO.Clustering/DT_res.csv',
+    encoding = 'UTF-8')  
+  lgb.fit <- readRDS.lgb.Booster(
+    'T:/RProjects/201706-UnderOptim/UO.Clustering/lgb_fit.rds')
+  
+  train <- fread(
+    'T:/RProjects/201706-UnderOptim/UO.Clustering/train.csv',
+    encoding = 'UTF-8')
+  f.som <- unlist(fread(header = FALSE,
+    'T:/RProjects/201706-UnderOptim/UO.Clustering/f_som.csv',
+    encoding = 'UTF-8'))
+
+  ignor <- unlist(fread(header = FALSE,
+    'T:/RProjects/201706-UnderOptim/UO.Clustering/ignor.csv',
+    encoding = 'UTF-8'))
+
+  
+  ref.ttl.source <- fread(
+    'T:/RProjects/201706-UnderOptim/UO.Clustering/ref_ttl_source.csv',
+    encoding = 'UTF-8')
+  ref.ttl.reason <- fread(
+    'T:/RProjects/201706-UnderOptim/UO.Clustering/ref_ttl_reason.csv',
+    encoding = 'UTF-8')
+}
+# END: LOAD DATA
+```
+  
+  
+```{r loadModel, message=FALSE, warning=FALSE, include=FALSE}
+ ## 1. Early models was trained on all of dataset 
+ ##    & [credit.sum != requested.loan.amount]
+# s <- 'som.fit.20x20.10000rlen.90NA.65ff'
+# s <- 'som.fit.20x20.80train.10000rlen.90NA.65ff.20170906'
+ 
+ ## 2. LAST models on 80% train datasets
+ ##   & credit.sum = requested.loan.amount
+# s <- 'som.fit.20x20.80train.10000rlen.90NA.65ff.20170919' 
+# s <- 'som.fit.24x24.80train.10000rlen.90NA.65ff.20170922' 
+# s <- 'som.fit.30x30.80train.10000rlen.90NA.65ff.20170921'
+# s <- 'som.fit.40x40.80train.10000rlen.90NA.65ff.20170920'
+
+## 3. to 31.08.17 & without doubled requests
+ s <- 'som.fit.40x40.80train.10000rlen.90NA.65ff.20171010'
+
+
+ 
+ ## 3. Load model
+ if (grepl('C:/', getwd()) == 1) {
+   s <- readRDS(paste0('~/RProjects/201706-UnderOptim/UO.Clustering/', s, '.rds'))
+   p <- readRDS('~/RProjects/201706-UnderOptim/UO.Clustering/som.pred.rds')
+   } else {
+   s <- readRDS(paste0('T:/RProjects/201706-UnderOptim/UO.Clustering/', s, '.rds'))
+   p <- readRDS('T:/RProjects/201706-UnderOptim/UO.Clustering/som.pred.rds')
+ }
+
+som.fit <- s
+som.pred <- p
+rm(s, p)
+```
+  
+
+***Исходные данные:***  
+ Период : [03.01.2014 - 31.08.2016]   
+
+```{r tabSegment, echo=FALSE}
+kable(rbind(
+  DT.full[, .(.N,
+              rejects = .N - sum(dim.issued, na.rm = TRUE),               
+              issued = sum(dim.issued, na.rm = TRUE),
+              dim.issued = mean(dim.issued*100, na.rm = TRUE),
+              was.ovd90.12m = mean(was.ovd90.12m*100, na.rm = TRUE)),
+          by = .(dim.segment)
+          ][, was.ovd90.12m :=
+              ifelse(was.ovd90.12m == 0, 0, was.ovd90.12m/dim.issued*100)
+            ][order(-issued)],
+  DT.full[, .(dim.segment = 'ВСЕГО',
+              .N,
+              rejects = .N - sum(dim.issued, na.rm = TRUE),  
+              issued = sum(dim.issued, na.rm = TRUE),
+              dim.issued = mean(dim.issued*100, na.rm = TRUE),
+              was.ovd90.12m = mean(was.ovd90.12m*100, na.rm = TRUE)),
+          ][, was.ovd90.12m :=
+              ifelse(was.ovd90.12m == 0, 0, was.ovd90.12m/dim.issued*100)
+            ]
+  ),
+      caption = '', 
+      col.names = c('Сегмент', 'Заявок, #',
+                    'Отказов, #',                    
+                    'Выдач, #',
+                    'Выдач, %',
+                    'в выданных: was.ovd90.12m, %'),
+      format.args = list(big.mark = ' '))
+```
+  
+ - 328 различных параметров, разбитых на условные "Группы":  
+  1. **application** - данные из заявки на кредит.  
+  2. **bki** - данные полученные от различных БКИ.  
+  3. **calculation** - данные расчитываемые в процессе принятия решения о выдаче.  
+  4. **furfsr** - список ФУРов и ФСРов.  
+  5. **info** - дополнительная информация о клиенте\продукте.  
+  6. **rbo** - информация о клиенте из РБО.  
+  7. **rbo.behavior** - "поведенческий скоринг" из РБО.  
+  
+***
+***Техника анализа:***  
+
+1. В каждой группе оцениваем важность каждого параметра для целевой переменной **was.ovd90.12m**.    
+
+2. После оценки, из каждой группы берём по топ-10 параметров. В результате имеем 65 самых важных параметров (примечание: в *calculation* 5 параметров).
+
+3. Делим весь набор данных на тренировочный (80%) и тестовый (20%). Работать будем только с тренировочным набором. По отобранным 65-ти параметрам проводим кластеризацию всех имеющихся заявок. В итоге каждая заявка будет отнесена в один из N узлов (кластеров).  
+
+4. Для каждого полученного узла считаем уровень одобрения (**%Approval**) и уровень дефолта (**%was.ovd90.12m**). Нас будут интересовать 2 типа узлов: 
+    + С высоким уровнем одобрения и высоким уровнем качества. Это потенциальные кандидаты на **автоодобрение**. Обозначим эту группу узлов как **zona HIGH**.  
+    + С низким уровнем одобрения и низким уровнем качества. Это потенциальные кандидаты на **автоотказ**. Обозначим эту группу узлов как **zona LOW**.  
+      &nbsp;
+5. Далее определяем каждый узел (кластер) в одну из 3-х зон:  
+    + **zona HIGH**: Это узлы, которые входят в квантиль [80-100] по %Approval (т.е это 20% узлов от всего их кол-ва, с наибольшим уровнем одобрения) и одновременно входят в квантиль [0-20] по %was.ovd90.12m (т.е в 20% узлов с наименьшим уровнем дефолта).  
+    + **zona LOW**: Это узлы, которые входят в квантиль [0-20] по %Approval (т.е это 20% узлов с наименьшим уровнем одобрения) и одновременно входят в квантиль [80-100] по %was.ovd90.12m (т.е в 20% узлов с наибольшим уровнем дефолта).  
+    + **zona ANY**: Это узлы, которые не вошли ни в зону HIGH, ни в зону LOW.  
+    
+    Таким образом каждая заявка получит признак HIGH, LOW или ANY, в зависимости от того, в какую зону попал узел, к которому она принадлежит.  
+      &nbsp;
+6. Теперь с помощью теста Краскела-Уоллиса проверяем независимость зон HIGH, LOW или ANY в каждом из 328 параметров заявки и определяем те параметры, которые статистически достоверно имеют различия в трёх зонах. Для надёжности будем использовать критерий значимости p-value = 1%.
+
+7. Среди отобранных на предыдущем шаге параметров, проводим тройной парный тест Вилкоксона (с уровнем p-value = 1%) на независимость и находим те параметры, которые статистически отличаются для всех пар зон: HIGH-LOW, HIGH-ANY и LOW-ANY. В результате получаем список параметров, которые могут использоваться для классификации заявок по зонам. Назовём этот список как **"Влияющие параметры"**.  
+
+8. Оценим важность каждого из *влияющих параметров* для классификации заявок по зонам HIGH или LOW или ANY. Параметры, в сумме дающие 95% важности, выделим в группу **"Значимые параметры"**.  
+
+9. Рассмотрим зональные распределения данных *значимых параметров* индивидуально и найдем для каждого из них решающую границу между зон HIGH-LOW.  
+
+10. На *значимых параметрах* попробуем построить примитивное дерево решений* для зон HIGH-LOW.
+
+###### *Примечание*: * Использовать полученное(-ые) деревья для классификации заявок не есть самый верный подход. Правильнее и надёжнее - на значимых параметрах обучить модель множественной классификации (подозреваю, что лучшая будет на ансабле случайных лесов) и использовать её.  
+
+***  
+***  
+### Результат.
+
+```{r missingNodes, message=FALSE, warning=FALSE, include=FALSE}
+# BEG: MISSING NODES & CLUSTERING
+## 1. Name of current model
+(som <- paste0(som.fit$grid$xdim, 'x', som.fit$grid$ydim,
+               '.', round(length(train)/dim(DT.full)[1]*100, 0), 'train',
+               '.',length(som.fit$changes), 'rlen',
+               '.',som.fit$maxNA.fraction*100, 'NA',
+               '.', length(dimnames(som.fit$data[[1]])[[2]]), 'ff'))
+
+
+## 2. Find missing nodes
+### missing nodes
+(if (length(sort(unique(som.fit$unit.classif))) < nrow(som.fit$codes[[1]])){
+  nodes.na <- which(!(seq(1, nrow(som.fit$codes[[1]])) %in%
+                         unique(som.fit$unit.classif)))
+} else {
+  nodes.na <- NULL
+})
+### nodes without issued credits
+(nodes.denied <- DT.train[, sum(dim.issued),
+                   keyby = .(som.fit$unit.classif)][V1 == 0, som.fit])
+```
+  
+  
+#### Шаги 1-2:
+Оценка важности и отбор параметров был проведён ранее в рамках анализа важности параметров по критерию was.ovd90.12m.
+
+***  
+#### Шаг 3:
+  Кластеризацию заявок проводим с помощью самоорганизующихся карт Кохонена. Построим карту размером 40х40 узлов.   
+  
+######  *Самоорганизующаяся карта Кохонена (SOM) - это нейронная сеть с обучением без учителя, выполняющая задачу кластеризации и визуализации. Кластеризация происходит по принципу максимальной похожести (близости) наблюдений друг с другом по всему вектору параметров. В процессе обучения алгоритм разносит заявки по ячейкам-узлам сети и результатом его работы является карта узлов. Каждая ячейка - это один узел или кластер. Близкие по цвету узлы имеют близкие значения какого-либо параметра(-ов).*  
+  
+  В результате построения и обучения карт имеем сеть такого вида:  
+```{r somVisualCount, echo=FALSE, message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# BEG: SOM VISUALIZATION 
+### colour palette & shape definition
+shape <-  'straight' # 'round'
+
+### counts within nodes
+plot(som.fit, type = 'counts', palette.name = matlab.like, shape = shape,
+     main = paste('Counts of applications in nodes, #'
+                  #, '::', som
+                  ))
+```
+  
+  В этой сети карты уровня одобрения (**%Approval**) и уровня дефолта (**%was.ovd90.12m**) представлены так:  
+```{r somVisualApproval&Was90, echo=FALSE, message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+## 2. Bads & approval plots
+### %was.ovd90.12m with dim.issued == 0
+plot(som.fit, type = 'property', palette.name = green2red,
+     property = setDT(rbind(
+       DT.train[, lapply(.SD, function(x){mean(x, na.rm = TRUE)}),
+          .SDcols = c('dim.issued', 'was.ovd90.12m'),
+          keyby = .(som.fit$unit.classif)
+          ][, was.ovd90.12m.T :=
+              ifelse(was.ovd90.12m == 0, 0, was.ovd90.12m/dim.issued)
+            ][, .(Group.1 = som.fit, x= was.ovd90.12m.T*100)],
+       if (is.null(nodes.na)){
+         NULL
+         } else {
+           cbind(Group.1 = nodes.na, x = NA)
+           })
+       )[Group.1 %in% nodes.denied, x := NA
+         ][order(Group.1)][, x],
+     shape = shape,
+     ncolors = 50,
+     main = paste('Was.ovd90.12m: Avg.%'
+                  #, '::', som
+                  ))
+
+### %dim.issued
+plot(som.fit, type = 'property', palette.name = heat.colors,
+     property = setDT(rbind(
+       aggregate(as.numeric(DT.train[, dim.issued*100]),
+                 by = list(som.fit$unit.classif),
+                 FUN = function(x){mean(x, na.rm = TRUE)}),
+       if (is.null(nodes.na)){
+         NULL
+       } else {
+         cbind(Group.1 = nodes.na, x = NA)
+       })
+       )[order(Group.1)][, x],
+     shape = shape,
+     ncolors = 50,
+     main = paste('Approval: Avg.%'
+                  #, '::', som
+                  ))
+```
+  
+  Так выглядит карта выданных кредитов.  
+  Одна точка = одна заявка. Серые точки - это отказанные заявки. Зелёные точки - это заявки, по которым были выданы кредиты.    
+```{r somVisualApproval, echo=FALSE, message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+### #dim.issued (! HEAVY PLOT)
+plot(som.fit, type = 'mapping', pch = 20, cex = .5, shape = shape,
+     col = ifelse(DT.train[, dim.issued] == 1, 'green3', 'gray77'),
+     main = paste('Issued, amount'
+                  #, '::', som
+                  ))
+```
+  
+  А так, например, выглядит карта возрастов клиентов:  
+```{r somVisualAge, echo=FALSE, message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+## 4. Another feature in original scale
+  f <- 'age'
+  plot(som.fit, type = 'property', palette.name = matlab.like,
+        property = setDT(rbind(
+          aggregate(as.numeric(DT.train[, f, with = FALSE][[1]]),
+                    by = list(som.fit$unit.classif),
+                    FUN = function(x){mean(x, na.rm = TRUE)}),
+          if (is.null(nodes.na)){
+            NULL
+            } else {
+              cbind(Group.1 = nodes.na, x = NA)
+              })
+          )[order(Group.1)][, x],
+        shape = shape,
+        main = paste('Age' #, ': Avg.'
+                     #, '::', som
+                     )); rm(f)
+# END: SOM VISUALIZATION 
+```
+  
+***    
+#### Шаги 4-5:
+  Для каждого узла нашей сети считаем уровень одобрения (**%Approval**) и уровень дефолта (**%was.ovd90.12m**). Далее разбиваем все узлы на квантили и присваиваем каждому из них соответсвующий маркер зоны HIGH, LOW или ANY в зависимости от уровней одобрения и дефолта внутри узла.  
+
+  На карте найденные узлы выглядят так:  
+  *- Тёмно-зелёные узлы - это узлы с высоким уровнем одобрения (пропорционален радиусу ярко-зелёного сектора внутри узла) и низким уровнем дефолта (пропорционален радиусу ярко-красного сектора внутри узла), т.е. это зона HIGH.*  
+  *- Тёмно-красные узлы - это узлы с низким уровнем одобрения и высоким уровнем дефолта, т.е. это зона LOW.*  
+  *- Чёрные узлы - это узлы в которых был 100% отказ, либо это пустые узлы.*  
+  *- Все остальные узлы - это зона ANY.*  
+```{r hiloPlot, echo=FALSE, message=FALSE, warning=FALSE, fig.width=12, fig.height=8}  
+## 4. Plot high-low nodes
+probs = c(.2, .8)
+### create matrix witn 'new' pseudo-codes
+ab <- as.matrix(hilo[, .(dim.issued, was.ovd90.12m.T)])
+dimnames(ab) <- list(paste0('V', seq(1, nrow(som.fit$codes[[1]]))),
+                     c('Approval', 'Default'))
+### create 'new' fitted SOM-model with pseudo-codes
+hilo.ab <- som.fit
+hilo.ab$codes <- ab
+### mapplot our high-low nodes
+plot(hilo.ab, type = 'codes',
+     palette.name = green2red,
+     bgcol = hilo[, zone.col],
+     codeRendering = 'segments',
+     shape = shape,
+     main = paste0('High & Low nodes by ', probs[1], '~', probs[2], ' quantile'
+                   #, ':: ', som
+     ))
+```  
+  
+  Разброс значений среднего процента одобрения и дефолтности в трёх зонах выглядит так:  
+```{r hiloBoxplot, echo=FALSE, message=FALSE, warning=FALSE}
+### boxplots by zone
+grid.arrange(
+  ggplot(hilo[zone != 'denied'], aes(x = zone, y = dim.issued*100, fill = zone.col)) +
+    geom_boxplot() +
+    labs(subtitle = paste('Approval in nodes: Avg.%:', probs[1], '~', probs[2], 'quantile')) +
+    scale_fill_manual(breaks = c('high', 'low', 'any'),
+                      values = c('green4', 'red4', 'snow')) +
+    scale_y_continuous(name = 'Approval, %',
+                       breaks = seq(0, 100, 5),
+                       trans = 'sqrt'),
+  ggplot(hilo[zone != 'denied'], aes(x = zone, y = was.ovd90.12m.T*100, fill = zone.col)) +
+    geom_boxplot() +
+    labs(subtitle = paste('Was.ovd90.12m in nodes: Avg.%:', probs[1], '~', probs[2], 'quantile')) +
+    scale_fill_manual(breaks = c('high', 'low', 'any'),
+                      values = c('green4', 'red4', 'snow')) +
+    scale_y_continuous(name = 'Was.ovd90.12m, %',
+                       breaks = seq(0, 100, 5),
+                       trans = 'sqrt'),
+  ncol = 2)
+```  
+  
+  Все узлы сети в системе координат **%Approval** и **%was.ovd90.12m** выглядят следующим образом:  
+  *- Зелёные пузыри - узлы зоны HIGH.*  
+  *- Красные пузыри - узлы зоны LOW.*  
+  *- Серые пузыри - узлы зоны ANY.*  
+  *- Сплошная зелёная линия - средний уровень одобрения по всем заявкам.*  
+  *- Красная сплошная линия - средний уровень дефолтности по выданным кредитам.*  
+  *- Пунктирные линии - соотвествующие границы нижнего (20%) и верхнего (20%) квантилей.*  
+  *- Размер пузыря пропорционален количеству заявок в узле*  
+  Нас будут интересовать красные и зелёные узлы:  
+```{r hiloQuntile, echo=FALSE, message=FALSE, warning=FALSE, fig.width=9, fig.height=6}
+### dotplot with quantile
+ggplot(hilo[zone != 'denied'],
+       aes(x = dim.issued*100, y = was.ovd90.12m.T*100, color = zone)) +
+  geom_point(aes(size = cases.N), alpha = .3) +
+  labs(title = paste0('Nodes allocation: ',
+                      probs[1]*100, '% ~ ', probs[2]*100, '% quantile')
+       #,subtitle = som
+       , x = 'Approval, %', y = 'Was.ovd90.12m, %') +
+  geom_hline(yintercept = hilo[, quantile(was.ovd90.12m.T, probs = probs)][1]*100,
+             linetype = 2, size = .5, color = 'red4') +
+  geom_hline(yintercept = hilo[, quantile(was.ovd90.12m.T, probs = probs)][2]*100,
+             linetype = 2, size = .5, color = 'red4') +
+  geom_hline(yintercept = DT.full[dim.issued == 1, mean(was.ovd90.12m)]*100,
+             linetype = 1, size = .5, color = 'red4') +
+  geom_vline(xintercept = hilo[, quantile(dim.issued, probs = probs)][1]*100,
+             linetype = 2, size = .5, color = 'green4') +
+  geom_vline(xintercept = hilo[, quantile(dim.issued, probs = probs)][2]*100,
+             linetype = 2, size = .5, color = 'green4') +
+  geom_vline(xintercept = DT.full[, mean(dim.issued)]*100,
+             linetype = 1, size = .5, color = 'green4') +
+  geom_rug(sides = 'tr') +
+  scale_color_manual(breaks = c('high', 'low', 'any'),
+                     values = c('gray77', 'green4', 'red4')) +
+  scale_y_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(0, hilo[, max(was.ovd90.12m.T*100)], 5), 1, 2, 3))) +
+  scale_x_continuous(breaks = sort(c(seq(0, hilo[, max(dim.issued*100)], 5))))
+
+rm(ab, hilo.ab)
+# END: GET & VISUALIZATION GOOD(high)~BAD(low) nodes
+```  
+  
+  Суммарные показатели по трём зонам таковы:
+```{r tabViewHiLo, echo=FALSE, message=FALSE, warning=FALSE}
+### 2. Some info from result table
+kable(DT.res[, .(.N,
+                 shareN = .N/DT.res[, .N]*100,
+                 amountDenied = .N - sum(dim.issued),
+                 sumDenied = sum(ifelse(dim.issued == 0, credit.sum,  0)),
+                 amountIssued = sum(dim.issued),
+                 sumIssued = sum(ifelse(dim.issued == 1, credit.sum,  0)),
+                 amountIssued = sum(dim.issued),
+                 percApproval = mean(dim.issued)*100,
+                 was90 = mean(was.ovd90.12m)*100),
+             keyby = .(zone)
+             ][, 'was90' := ifelse(was90 == 0, 0, was90/percApproval*100)],
+      caption = '',
+      col.names = c('Зона', 'Заявок, #', 'Заявок, %',
+                    'Отказов, #',
+                    'Отказов, Р',
+                    'Выдач, #',
+                    'Выдач, Р',
+                    'Выдач, #',
+                    'Выдач, %',
+                    'в выданных: was.ovd90.12m, %'),
+      format.args = list(big.mark = ' '))
+```
+  
+***  
+  *Быстро глянем как сеть справится с классификацией заявок, которых она не видела (test set = 20%):*
+```{r somPredict, echo=FALSE, message=FALSE, warning=FALSE}
+
+## 3. Define the predicted zone
+DT.test <- DT.test[, node := som.pred$unit.classif]
+DT.test <- merge(DT.test, hilo[, .(node, zone)],
+                 by = 'node',
+                 all.x = TRUE, all.y = FALSE,
+                 sort = FALSE)
+
+## 4. Approved & default at predicted zones amount all credits
+### on test set
+kable(DT.test[zone != 'denied',
+              .(.N,
+                shareN = .N/DT.test[zone != 'denied', .N]*100,
+                amountDenied = .N - sum(dim.issued),
+                sumDenied = sum(ifelse(dim.issued == 0, credit.sum,  0)),
+                amountIssued = sum(dim.issued),
+                sumIssued = sum(ifelse(dim.issued == 1, credit.sum,  0)),
+                amountIssued = sum(dim.issued),
+                percApproval = mean(dim.issued)*100,
+                was90 = mean(was.ovd90.12m)*100),
+              keyby = .(zone)
+              ][, 'was90' := ifelse(was90 == 0, 0, was90/percApproval*100)],
+      caption = '',
+      col.names = c('Зона', 'Заявок, #', 'Заявок, %',
+                    'Отказов, #',
+                    'Отказов, Р',
+                    'Выдач, #',
+                    'Выдач, Р',
+                    'Выдач, #',
+                    'Выдач, %',
+                    'в выданных: was.ovd90.12m, %'),
+      format.args = list(big.mark = ' '))
+
+## 5. Plot predicted zones
+### data
+gpred <- DT.test[, .(cases.N = .N,
+                     approval = mean(dim.issued)*100,
+                     was90 = mean(was.ovd90.12m)*100),
+                 keyby = .(zone, node)
+                 ][, 'was90' := ifelse(was90 == 0, 0, was90/approval*100)]
+## plot
+ggplot(gpred[zone != 'denied'], aes(x = approval, y = was90, color = zone)) +
+  geom_point(aes(size = cases.N), alpha = .3) +
+  labs(title = 'On test set predicted nodes & zones'
+       , x = 'Approval, %', y = 'Was.ovd90.12m, %') +
+  geom_hline(yintercept = gpred[, quantile(was90, probs = probs)][1],
+             linetype = 2, size = .5, color = 'red4') +
+  geom_hline(yintercept = gpred[, quantile(was90, probs = probs)][2],
+             linetype = 2, size = .5, color = 'red4') +
+  geom_hline(yintercept = DT.full[dim.issued == 1, mean(was.ovd90.12m)]*100,
+             linetype = 1, size = .5, color = 'red4') +
+  geom_vline(xintercept = gpred[, quantile(approval, probs = probs)][1],
+             linetype = 2, size = .5, color = 'green4') +
+  geom_vline(xintercept = gpred[, quantile(approval, probs = probs)][2],
+             linetype = 2, size = .5, color = 'green4') +
+  geom_vline(xintercept = DT.full[, mean(dim.issued)]*100,
+             linetype = 1, size = .5, color = 'green4') +
+  geom_rug(sides = 'tr') +
+  scale_color_manual(breaks = c('high', 'low', 'any'),
+                     values = c('gray77', 'green4', 'red4')) +
+  scale_y_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(0, gpred[, max(was90)], 5), 1, 2, 3))) +
+  scale_x_continuous(breaks = sort(c(seq(0, gpred[, max(approval)], 5))))
+```
+  
+***   
+#### Шаги 6-8:  
+  После последовательного применения статистических тестов на независимость был получен список **"Влияющих параметров"**.  
+  Влияющий параметр - это параметр у которого, среднее и медианное значения в каждой из трёх зон статистически отличаются между собой с уровнем значимости p-value не больше 1%.  
+  
+  Из списка *влияющих параметров*, после оценки важности каждого из них, получаем группу **значимых** параметров в сумме обеспечивающих 95% важности для трёхзонной (множественной) классификации заявок.
+```{r lgbImportancePlot, echo=FALSE, message=FALSE, warning=FALSE, fig.width=9, fig.height=9}
+## 4. View features importance
+xgboost::xgb.ggplot.importance(res.feat[imp.95 == 1, .(Feature = feature,
+                                                       Gain = gain)]) +
+  ggplot2::ggtitle('High & Low & Any zones ~ Features',
+                   subtitle = paste0('95% feature (# ',
+                                     res.feat[imp.95 == 1, .N],
+                                     ') importance by LigthGBM')) +
+  ggplot2::theme(plot.title = element_text(size = 10, face = "bold"),
+                 axis.text.y = element_text(size = 8),
+                 panel.background = element_rect(color = 2)) +
+  ggplot2::aes(width = .7)
+```
+  
+  Основные описательные статистики в каждой зоне по каждому **значимому** параметру с верхнего графика приведены в этой таблице:  
+```{r lgbImportanceDescipt, echo=FALSE, message=FALSE, warning=FALSE}
+kable(res.feat[imp.95 == 1,
+               .(feature, descript, gain*100, high, low, any)],
+      format = 'html',
+      caption = 'Среднее, Медиана, Min & Max, Частота появления (для текстовых параметров)',
+      col.names = c('Feature', 'Описание', 'Вес, %', 'зона HIGH', 'зона LOW', 'зона ANY')) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                font_size = 11)
+
+```
+  
+  **Примечание:**  
+  *на предваряющем шаге, из кандидатов в список значимых параметров осознанно были исключены следующие праметры:*  
+```{r tabIgnoreFeatures, echo=FALSE, message=FALSE, warning=FALSE}
+kable(DT.f[order(-Gain.avg)][Feature %in% ignor, .(Feature, descript)],
+      format = 'html',
+      caption = '',
+      col.names = c('Feature', 'Описание')) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                font_size = 11)
+```
+  
+***  
+#### Шаг 9:  
+ Посмотрим как распределяются данные каждого найденого *значимого параметра* между зонами HIGH, LOW и ANY.
+ Так как многие числовые параметры имеют странные (возможно это ошибки ввода) выбросы, то откинем крайние 1%-ные квантили, а так же дополнительно нарисуем график логарифмированных данных (ниже основного). Это позволит получить в ряде случаев более наглядную картинку.  
+ Для "факторов" посмотрим столбиковые графы.  
+ И для всех *значимых параметров* построим небольшое решающее дерево:    
+```{r plotFeatures, echo=FALSE, fig.width=9, message=FALSE, warning=FALSE}
+#for (i in c('packets.mean.income.wage')) {
+for (i in res.feat[imp.95 == 1, feature]) {
+  ## separate between plots
+  cat (i)
+  
+  if (!(DT.res[, is.factor(get(i))] | DT.res[, is.character(get(i))])&
+       DT.res[, length(unique(get(i)))] > 10){
+
+    ## load trees
+    if (grepl('C:/', getwd()) == 1) {
+      dt <- fread(
+            paste0('C:/Users/mi.galkin/Documents/RProjects/201706-UnderOptim/UO.Clustering/Trees/dt1_',
+                   i, '.csv'), encoding = 'UTF-8')
+      d <- fread(
+           paste0('C:/Users/mi.galkin/Documents/RProjects/201706-UnderOptim/UO.Clustering/Trees/d1_',
+                  i, '.csv'), encoding = 'UTF-8')
+      t1 <- readRDS(
+            paste0('C:/Users/mi.galkin/Documents/RProjects/201706-UnderOptim/UO.Clustering/Trees/t1_',
+                   i, '.rds'))
+      t1log <- readRDS(
+               paste0('C:/Users/mi.galkin/Documents/RProjects/201706-UnderOptim/UO.Clustering/Trees/t1log_',
+               i, '.rds'))
+    } else {
+      dt <- fread(
+            paste0('T:/RProjects/201706-UnderOptim/UO.Clustering/Trees/dt1_',
+                   i, '.csv'), encoding = 'UTF-8')
+      d <- fread(
+           paste0('T:/RProjects/201706-UnderOptim/UO.Clustering/Trees/d1_',
+                  i, '.csv'), encoding = 'UTF-8')
+      t1 <- readRDS(
+            paste0('T:/RProjects/201706-UnderOptim/UO.Clustering/Trees/t1_',
+                   i, '.rds'))
+      t1log <- readRDS(
+               paste0('T:/RProjects/201706-UnderOptim/UO.Clustering/Trees/t1log_',
+                      i, '.rds'))
+    }
+    
+    ## plot density
+    grid.arrange(
+      #### value
+      ggplot(data = dt) +
+        geom_density(aes(x = value, fill = zone), alpha = .5, adjust = 3
+                     #, kernel = 'biweight'
+                     ) +
+        scale_fill_manual(values = c('gray', 'green', 'red')) +
+        scale_y_continuous(labels = scales::
+                             format_format(big.mark = ' ',
+                                           decimal.mark = '.',
+                                           scientific = FALSE)) +
+        scale_x_continuous(labels = scales::
+                             format_format(big.mark = ' ',
+                                           decimal.mark = '.',
+                                           scientific = FALSE
+                                           )(pretty(dt[, value])),
+                           breaks = pretty(dt[, value])) +
+        labs(subtitle = paste0(res.feat[feature == i, descript],
+                               ' (№', which(res.feat[, feature] == i),')')) +
+        theme(legend.position = c(.97, .87), #'top
+              legend.title = element_text(size = 9),
+              legend.text = element_text(size = 8),
+              legend.key.size = unit(.4, 'cm'),
+              axis.title.x = element_blank(),
+              axis.text.x = element_text(size = 8),
+              axis.title.y = element_text(size = 9),
+              axis.text.y = element_text(size = 8)),
+      
+      #### log(value + 1)
+      ggplot(data = dt) +
+        geom_density(aes(x = log(value + 1), fill = zone), alpha = .5, adjust = 3
+                     #, kernel = 'biweight'
+                     ) +
+        scale_fill_manual(values = c('gray', 'green', 'red')) +
+        scale_y_continuous(trans = 'sqrt') +
+        scale_x_continuous(name = paste0('ln (', i, ')')) +
+        theme(legend.position = 'none',
+              axis.title.x = element_text(size = 9),
+              axis.text.x = element_text(size = 8),
+              axis.title.y = element_text(size = 9),
+              axis.text.y = element_text(size = 8)),
+      nrow = 2)
+    
+    ## plot decision tree
+    if (!is.null(unlist(t1)$node.split.breaks)) { # check split in t1 tree
+        plot(t1, type = 'extended',
+           main = res.feat[feature == i, descript],
+           gp = gpar(fontsize = 7.5),
+           ip_args = list(gp = gpar(fontsize = 7.5), id = TRUE, pval = TRUE),
+           tp_args = list(gp = gpar(fontsize = 7.5)
+                          , fill = c('gray88', 'green', 'red')
+                          , id = TRUE
+                          , beside = TRUE
+                          , gap = 0
+                          , rot = 0
+                          , just = c('center', 'top'))
+             )
+      next
+    }
+    
+    if (!is.null(unlist(t1log)$node.split.breaks)) { # check split in t1 tree
+      plot(t1log, type = 'extended',
+           main = res.feat[feature == i, descript],
+           gp = gpar(fontsize = 7.5),
+           ip_args = list(gp = gpar(fontsize = 7.5), id = TRUE, pval = TRUE),
+           tp_args = list(gp = gpar(fontsize = 7.5)
+                          , fill = c('gray88', 'green', 'red')
+                          , id = TRUE
+                          , beside = TRUE
+                          , gap = 0
+                          , rot = 0
+                          , just = c('center', 'top'))
+           )
+      next
+    }  
+  
+  
+  } else {
+
+        ## load tree
+    if (grepl('C:/', getwd()) == 1) {
+      dt <- fread(
+            paste0('C:/Users/mi.galkin/Documents/RProjects/201706-UnderOptim/UO.Clustering/Trees/dt2_',
+                   i, '.csv'), encoding = 'UTF-8')
+      d <- fread(
+           paste0('C:/Users/mi.galkin/Documents/RProjects/201706-UnderOptim/UO.Clustering/Trees/d2_',
+                  i, '.csv'), encoding = 'UTF-8')
+      t2 <- readRDS(
+            paste0('C:/Users/mi.galkin/Documents/RProjects/201706-UnderOptim/UO.Clustering/Trees/t2_',
+                   i, '.rds'))
+    } else {
+      dt <- fread(
+            paste0('T:/RProjects/201706-UnderOptim/UO.Clustering/Trees/dt2_',
+                   i, '.csv'), encoding = 'UTF-8')
+      d <- fread(
+           paste0('T:/RProjects/201706-UnderOptim/UO.Clustering/Trees/d2_',
+                  i, '.csv'), encoding = 'UTF-8')
+      t2 <- readRDS(
+            paste0('T:/RProjects/201706-UnderOptim/UO.Clustering/Trees/t2_',
+                   i, '.rds'))      
+    }
+    
+    ## plot barchart
+    print(
+    ggplot(data = dt) +
+        geom_bar(aes(x = as.factor(value), y = share, fill = zone),
+                 position = 'dodge', stat = 'identity') + 
+        scale_fill_manual(values = c('gray', 'green', 'red')) +
+        scale_x_discrete(labels = scales::wrap_format(40)) +
+        scale_y_continuous(labels = scales::percent, trans = 'sqrt',
+                           limits = c(0, 1.03),
+                           breaks = c(0, .01, .03, .05, .1, .15, .2, .3, .4, .5,
+                                      .6, .8, 1)) +
+        geom_text(aes(x = as.factor(value), y = share,
+                      label = scales::percent(share), group = zone),
+                  position = position_dodge(width=.9),
+                  size = 3, hjust = -.05) +
+        coord_flip() + 
+        labs(subtitle = paste0(res.feat[feature == i, descript],
+                               ' (№', which(res.feat[, feature] == i),')')) +
+        theme(legend.position = 'top',
+              legend.key.size = unit(.4, 'cm'),
+              axis.title.y = element_blank(),
+              axis.text.y = element_text(size = 8),
+              axis.title.x = element_blank(),
+              axis.text.x = element_text(size = 7.5))
+    )
+    ## plot decision tree
+    plot(t2, type = 'extended',
+         main = res.feat[feature == i, descript],
+         gp = gpar(fontsize = 7),
+         ip_args = list(gp = gpar(fontsize = 7), id = TRUE, pval = TRUE),
+         tp_args = list(gp = gpar(fontsize = 7)
+                        , fill = c('gray88', 'green', 'red')
+                        , id = TRUE
+                        , beside = TRUE
+                        , gap = 0
+                        , rot = 0
+                        , just = c('center', 'top')
+                        )
+         )
+  } 
+}
+rm(i, dt, d, t1, t1log, t2)
+```
+  
+***  
+#### Шаг 10:  
+ На всех *значимых параметрах* построим одно дерево глубиной в 5 уровней:  
+
+```{r plotMainTree, echo=FALSE, fig.width=12, fig.height=10, message=FALSE, warning=FALSE}
+## load data and tree
+  if (grepl('C:/', getwd()) == 1) {
+    dall <- fread('~/RProjects/201706-UnderOptim/UO.Clustering/Trees/dall.csv',
+                  encoding = 'UTF-8')
+    tall5 <- readRDS('~/RProjects/201706-UnderOptim/UO.Clustering/Trees/tall5.rds')
+    #tall <- readRDS('~/RProjects/201706-UnderOptim/UO.Clustering/Trees/tall.rds')
+  } else {
+    dall <- fread('T:/RProjects/201706-UnderOptim/UO.Clustering/Trees/dall.csv',
+                  encoding = 'UTF-8')
+    tall5 <- readRDS('T:/RProjects/201706-UnderOptim/UO.Clustering/Trees/tall5.rds')
+    #tall <- readRDS('T:/RProjects/201706-UnderOptim/UO.Clustering/Trees/tall.rds')   
+  }
+
+## plot tree 
+plot(as.party(tall5), type = 'extended',
+     gp = gpar(fontsize = 8),
+     ip_args = list(gp = gpar(fontsize = 8), id = TRUE
+                    , pval = FALSE
+                    , abbreviate = FALSE
+     ),
+     tp_args = list(gp = gpar(fontsize = 8),
+                    fill = c('gray88', 'green', 'red'),
+                    beside = TRUE, ymax = 1, ylines = 1.2
+                    #, widths = 1
+                    , gap = 0
+                    , reverse = NULL
+                    , rot = 0
+                    , just = c('center', 'top')
+                    , id = FALSE  
+                    #, mainlab = NULL
+     ))
+```
+  
+##### ТОП-5 отказов в каждом конечном листе:  
+  
+```{r tabTerminalReason, echo=FALSE, message=FALSE, warning=FALSE, results='asis'}
+i <- 9
+for (i in which(tall5$frame$var == '<leaf>')) {
+
+  #cat(paste('Лист № ', i, ':\n'))
+  cat('--- Лист № ', i, ' --------------------------------------------------------')
+
+  ### Approval & Default rate BY ZONE table
+  print(kable(rbind(
+              dall[tall5$where == i,
+                   .(zone = 'ВСЕГО',
+                     .N,
+                     rejected = .N - sum(dim.issued),
+                     sumRejected = sum(ifelse(dim.issued == 0, credit.sum,  0)),
+                     issued = sum(dim.issued),
+                     sumIssued = sum(ifelse(dim.issued == 1, credit.sum,  0)),
+                     approval = mean(dim.issued)*100,
+                     was90 = mean(was.ovd90.12m)*100)],
+              dall[tall5$where == i,
+                   .(.N,
+                     rejected = .N - sum(dim.issued),
+                     sumRejected = sum(ifelse(dim.issued == 0, credit.sum,  0)),
+                     issued = sum(dim.issued),
+                     sumIssued = sum(ifelse(dim.issued == 1, credit.sum,  0)),
+                     approval = mean(dim.issued)*100,
+                     was90 = mean(was.ovd90.12m)*100),
+                   by = .(zone = ifelse(zone == 'h', 'HIGH',
+                                        ifelse(zone == 'l', 'LOW', 'ANY')))
+                   ][order(was90, -approval)]),
+              format = 'html',
+              caption = '',
+              col.names = c('Зона',
+                            'Заявок, #',
+                            'Отказов, #',
+                            'Отказов, Р',
+                            'Выдач, #',
+                            'Выдач, Р',
+                            'Выдач, %',
+                            'в выданных: was.ovd90.12m, %')
+              , format.args = list(big.mark = ' ')) %>%
+          kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                        font_size = 10.5)
+        )
+  
+
+  ## load trees
+  if (grepl('C:/', getwd()) == 1) {
+    dall.ttl.reas <- fread(
+      paste0('~/RProjects/201706-UnderOptim/UO.Clustering/Trees/dall.ttl.reas_leaf_',
+                    i, '.csv'), encoding = 'UTF-8')
+    } else {
+    dall.ttl.reas <- fread(
+      paste0('T:/RProjects/201706-UnderOptim/UO.Clustering/Trees/dall.ttl.reas_leaf_',
+                    i, '.csv'), encoding = 'UTF-8')
+    } 
+  
+  ## print reasons table
+  print(
+  kable(dall.ttl.reas,
+        format = 'html',
+        caption = '',
+        col.names = c('Причина отказа',
+                      'High, #', 'High, %',
+                      'Low, #', 'Low, %',
+                      'Any, #', 'Any, %',
+                      'ALL, #', 'ALL, %')
+        , format.args = list(big.mark = ' ')
+        ) %>%
+    kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                  font_size = 11)
+  )
+}
+rm(dall.ttl.reas, i)
+``` 
+  
+***  
+  *СПРАВОЧНО: Общая структура отказов по зонам:*    
+  
+##### 1. Кто отказывает в каждой зоне и в целом:  
+```{r tabHiDenyReason tab, echo=FALSE, message=FALSE, warning=FALSE}
+kable(ref.ttl.source,
+      format = 'html',
+      caption = '',
+      col.names = c('Кто отказал',
+                    'High, #', 'High, %',
+                    'Low, #', 'Low, %',
+                    'Any, #', 'Any, %',
+                    'ALL, #', 'ALL, %'),
+      format.args = list(big.mark = ' ')) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                font_size = 11)
+``` 
+ 
+##### 2. ТОП-33 причин отказа в каждой зоне и в целом:  
+```{r tabLoDenyReason, echo=FALSE, message=FALSE, warning=FALSE}
+kable(ref.ttl.reason,
+      format = 'html',
+      caption = '',
+      col.names = c('Причина отказа',
+                    'High, #', 'High, %',
+                    'Low, #', 'Low, %',
+                    'Any, #', 'Any, %',
+                    'ALL, #', 'ALL, %')
+      #, format.args = list(big.mark = ' ')
+      ) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                font_size = 11)
+``` 
+  
+***
+```{r printTree, eval=FALSE, fig.height=18, fig.width=12, message=FALSE, warning=FALSE, include=FALSE}
+print(tall5)
+```
+***
+
