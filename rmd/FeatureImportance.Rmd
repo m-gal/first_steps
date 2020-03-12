@@ -1,0 +1,321 @@
+---
+title: "Feature Importance."
+output:
+  html_document: default
+  html_notebook: default
+  pdf_document: default
+  word_document: default
+---
+### **Оценка важности параметров (данных) для качества кредитов наличными.**
+#### (не предодобренных)
+###### *Галкин Михаил, июл.2017*
+***
+```{r, include=FALSE}
+library(knitr)
+## global option for chunk
+opts_knit$set(progress = FALSE, verbose = FALSE)
+opts_chunk$set(echo=FALSE, message=FALSE, warning=FALSE)
+
+## this function is basically creating chunks within chunks, and then
+## need to use results='asis' so that the html image code is rendered 
+### Its original function from StackOverflow
+ h.expand <- function(ht, cap) {
+   cat(knit(text = knit_expand(text = 
+      sprintf("```{r %s, fig.height=%s, fig.cap='%s'}\n.pl\n```", cap, ht, cap)
+   )))}
+
+# its mnu function
+#h.expand <- function(ht) {
+#  cat(knit(text = knit_expand(text = 
+#     sprintf("```{r %s, fig.height=%s}\n.pl\n```", ht, ht)
+#  )))}
+```
+
+
+```{r load, include=FALSE}
+# Load libraries
+library(data.table)
+library(ggplot2)
+library(kableExtra)
+
+# Load data
+if (grepl('C:/', getwd()) == 1) {
+  DT <- fread('C:/Users/mi.galkin/Documents/RProjects/201706-UnderOptim/UO.EDA/DT_issued.csv', sep = ';', encoding = "UTF-8", stringsAsFactors = TRUE)
+  DT.f <- fread('C:/Users/mi.galkin/Documents/RProjects/201706-UnderOptim/UO.Importance/DTf_importance.csv', sep = ';')
+} else {
+  DT <- fread('T:/RProjects/201706-UnderOptim/UO.EDA/DT_issued.csv', sep = ';', encoding = "UTF-8", stringsAsFactors = TRUE)
+  DT.f <- fread('T:/RProjects/201706-UnderOptim/UO.Importance/DTf_importance.csv', sep = ';')
+}
+```
+
+
+#### Исходные данные.
+  - 83 924 выданных кредитов наличными по заявкам за период [03.01.2014 - 30.06.2016]
+  - 328 различных параметров.
+  - целевая переменная **was.ovd90.12m** : просрочка 90+ в первые 12 мес. после выдачи.  
+  &nbsp;
+
+#### Структура выданных кредитов.
+```{r preapproved, echo=FALSE}
+
+kable(DT[, .(.N, mean(was.ovd90.12m)*100), by = 'dim.preapproved'][order(-N)],
+      caption = '',
+      col.names = c('Признак', 'Кол-во', '% was.ovd90.12m'),      
+      format.args = list(big.mark = ' '))
+```
+
+```{r segment, echo=FALSE}
+kable(DT[, .(.N, mean(was.ovd90.12m)*100), by = 'dim.segment'][order(-N)],
+      caption = '', 
+      col.names = c('Сегмент', 'Кол-во', '% was.ovd90.12m'),
+      format.args = list(big.mark = ' '))
+```
+&nbsp;
+
+#### Структура параметров (переменных).
+Все 328 параметров разбиты на условные "Группы (group)" и "Стадии (stage)":
+
+```{r group, echo=FALSE}
+kable(DT.f[group != 'response', .N, keyby = group], caption = '', 
+      col.names = c('Группа', 'Кол-во параметров'),
+      format.args = list(big.mark = ' '))
+```
+  
+  1. **application** - данные из заявки на кредит.
+  2. **bki** - данные полученные от различных БКИ.
+  3. **calculation** - данные расчитываемые в процессе принятия решения о выдаче.
+  4. **furfsr** - список ФУРов и ФСРов.
+  5. **info** - дополнительная информация о клиенте\продукте.
+  6. **rbo** - информация о клиенте из РБО.
+  7. **rbo.behavior** - "поведенческий скоринг" из РБО.
+  8. **score** - различные скор-баллы, как свои так и от БКИ, в т.ч. ретро.  
+&nbsp;
+
+```{r stage, echo=FALSE}
+kable(DT.f[group != 'response', .N, keyby = stage], caption = '', 
+      col.names = c('Стадия', 'Кол-во параметров'),
+      format.args = list(big.mark = ' '))
+```  
+  
+  1. **application** - этап подачи заявки.
+  2. **score** - различные скор-баллы, как свои так и от БКИ, в т.ч. ретро.
+  3. **scoring** - этап "скоринга".
+  4. **underwriting** - этап андеррайтинга.  
+&nbsp;
+
+Стадии и группы могут пересекаться по параметрам:
+```{r group&stage, echo=FALSE}
+table(DT.f[group != 'response', .(group, stage)])
+```
+  
+  
+***
+#### Методика оценки важности параметров.
+Важность параметров оценивалась с помощью двух машин градиентного бустинга:
+
+  1. **XGBoost**.
+  2. Недавно появившийся **LightGBM** от Microsoft.
+
+В качестве моделей использовались ансамбли деревьев классификации.
+В итоге, для финальной оценки важности параметров, взято средне-взвешенное оценок этих двух алгоритмов.  
+&nbsp;
+
+#### Как читать график.
+В заголовке графика указано по каким параметрам показана важность.  
+**GROUP = rbo.behavior** : Параметры принадлежащие к группе 'Поведенческий скоринг из РБО'*
+```{r How read the plot, echo=FALSE}
+i <- 'Gain.avg.preapp0.grp.rbo.behavior'
+  # field names
+  x <- sub('.avg.', '.xgb.', i)
+  l <- sub('.avg.', '.lgb.', i)
+  p <- ifelse(substr(i, 16, 16) == '0', 'na.perc.preapp0', 'na.perc.preapp1')
+  
+  # create miniDT with gain of GBM
+  imp <- DT.f[!(is.na(get(i))), .(Feature, get(i), get(x), get(l), get(p), descript)]
+  names(imp)[2:5] <- c('Gain', 'Xgb', 'Lgb', 'PercNA')
+  
+  # get info about block of features
+  i.preapp <- ifelse(substr(i, 16, 16) == '0', 'NOT PREAPPROVED', 'PREAPPROVED')
+  i.line <- ifelse(substr(i, 18, 20) == 'stg', 'STAGE', 'GROUP')
+  i.box <- substr(i, 22, nchar(i))
+  
+  # calculate clusters
+  clust <- suppressWarnings(
+    Ckmeans.1d.dp::Ckmeans.1d.dp(x = imp[, Gain], k = c(2, 9)))
+  imp[, Cluster := as.character(clust$cluster)]
+  
+  # calculate cumulitive sum of Gain
+  imp <- copy(imp[order(-Gain)])
+  imp[, CumGain := cumsum(imp[, .(Gain)])]
+  
+  # plot the importance
+  ggplot(imp, aes(x = factor(Feature, levels = rev(Feature)),
+                  y = Gain, width = 0.7)) +
+    geom_bar(aes(fill = Cluster), stat = 'identity', position = 'identity') +
+    geom_errorbar(aes(ymax = Xgb, ymin = Lgb), width = 0.5) +
+    coord_flip() + 
+    ggtitle(paste('was.ovd90.12m ~', i.line, '=', i.box),
+            subtitle = paste(i.preapp, ': Average feature importance')) +
+    theme(plot.title = element_text(size = 10, face = "bold"),
+          axis.title.y = element_blank(),
+          axis.text.y = element_text(size = 7.5),
+          panel.grid.major.y = element_blank(),
+          panel.background = element_rect(color = 'darkgreen'),
+          legend.justification=c(1,0),
+          legend.position=c(1,0),
+          legend.background = element_rect(fill=alpha(0.01))) +
+    geom_text(aes(label = paste0(formatC(imp[, PercNA*100],
+                                         format = 'f', digits = 1), "%"),
+                  y = .00),  size =2.8, hjust = 1, vjust = 0.3) +
+    scale_y_continuous(expand = c(0.1, 0)) + 
+    
+    geom_vline(xintercept = sum(imp[, CumGain] <= .9),
+               linetype = 2, size = .5, color = 'red') + 
+    annotate('text', x = sum(imp[, CumGain] <= .9),
+             y = max(imp[, Gain]/2), label = '90%', color = 'red',
+             vjust = -.25, hjust = 0) +
+    
+    geom_segment(aes(x = 20, y = 0.8*imp[, max(Xgb, Lgb, na.rm = T)],
+                     xend = 22, yend = imp[3, max(Xgb, Lgb, na.rm = T)]),
+                 arrow = arrow(length = unit(0.3, 'cm')), color = 'green') +
+    geom_segment(aes(x = 20, y = 0.8*imp[, max(Xgb, Lgb, na.rm = T)],
+                     xend = 22, yend = imp[3, min(Xgb, Lgb, na.rm = T)]),
+                 arrow = arrow(length = unit(0.3, 'cm')),color = 'green') +
+    annotate('text', x = 20, y = 0.8*imp[, max(Xgb, Lgb, na.rm = T)],
+             label = 'Разброс оценок \nXGBoost и LightGBM', color = 'darkgreen', 
+             size = 3, vjust = 1, hjust = 0.5) +
+    
+    geom_segment(aes(x = 17, y = 0.4*imp[, max(Xgb, Lgb, na.rm = T)],
+                     xend = 20.7, yend = imp[4, Gain]),
+                 arrow = arrow(length = unit(0.3, 'cm')), color = 'green') +
+    annotate('text', x = 17, y = 0.5*imp[, max(Xgb, Lgb, na.rm = T)],
+             label = 'Итоговая оценка важности', color = 'darkred', 
+             size = 3.5, vjust = 1, hjust = 0.3) +
+  
+    annotate('text', x = sum(imp[, CumGain] <= .9),
+             y = 0.6*imp[, max(Xgb, Lgb, na.rm = T)],
+             label = 'Линия, на и выше которой \nнаходятся параметры \nв сумме оказывающие 90% \nвлияния на отклик' ,
+             color = 'darkgreen', size = 3, vjust = 1, hjust = 0) +
+    
+    geom_segment(aes(x = 2.5, y = 0.4*imp[, max(Xgb, Lgb, na.rm = T)],
+                     xend = 3, yend = -.004),
+                 arrow = arrow(length = unit(0.3, 'cm')), color = 'green') +
+    geom_segment(aes(x = 2.5, y = 0.4*imp[, max(Xgb, Lgb, na.rm = T)],
+                     xend = 1, yend = -.004),
+                 arrow = arrow(length = unit(0.3, 'cm')),color = 'green') +
+    annotate('text', x = 2.5, y = 0.4*imp[, max(Xgb, Lgb, na.rm = T)],
+             label = 'Доля пустых значений \nу данного параметра \n(NULL, %)', color = 'darkgreen', 
+             size = 3, vjust = .3, hjust = 0) + 
+    annotate('text', x = 6, y = .03,
+             label = 'Все полученные оценки важности \nразбиваются на несколько кластеров по методу К-средних. \nКаждый кластер показан отдельным цветом',
+             color = 'darkred', size = 3, vjust = 0, hjust = 0) 
+      
+    rm(x, l, p, i, imp, i.preapp, i.line, i.box, clust)
+```
+  
+  
+***
+### Результат.
+#### Не предодобренные кредиты:
+```{r NOT preapproved, echo=FALSE, fig.width=8, message=FALSE, warning=FALSE, results='asis'}
+#i <- 'Gain.avg.preapp0.stg.application'
+for (i in names(DT.f)[grep('Gain.avg.preapp0', names(DT.f))]) {
+  
+  if (i == 'Gain.avg.preapp0.stg.score') {
+    next
+  }
+  
+  # field names
+  x <- sub('.avg.', '.xgb.', i)
+  l <- sub('.avg.', '.lgb.', i)
+  p <- ifelse(substr(i, 16, 16) == '0', 'na.perc.preapp0', 'na.perc.preapp1')
+
+  # create miniDT with gain of GBM
+  imp <- DT.f[!(is.na(get(i))), .(Feature, get(i), get(x), get(l), get(p), descript)]
+  names(imp)[2:5] <- c('Gain', 'Xgb', 'Lgb', 'PercNA')
+  
+  # get info about block of features
+  i.preapp <- ifelse(substr(i, 16, 16) == '0', 'NOT PREAPPROVED', 'PREAPPROVED')
+  i.line <- ifelse(substr(i, 18, 20) == 'stg', 'STAGE', 'GROUP')
+  i.box <- substr(i, 22, nchar(i))
+  
+  # calculate clusters
+  clust <- suppressWarnings(
+    Ckmeans.1d.dp::Ckmeans.1d.dp(x = imp[, Gain], k = c(2, 9)))
+  imp[, Cluster := as.character(clust$cluster)]
+  
+  # calculate cumulitive sum of Gain
+  imp <- copy(imp[order(-Gain)])
+  imp[, CumGain := cumsum(imp[, .(Gain)])]
+  
+  # plot the importance
+  .pl <- ggplot(imp, aes(x = factor(Feature, levels = rev(Feature)),
+                    y = Gain, width = 0.7)) +
+      geom_bar(aes(fill = Cluster), stat = 'identity', position = 'identity') +
+      geom_errorbar(aes(ymax = Xgb, ymin = Lgb), width = 0.5) +      
+      coord_flip() + 
+      ggtitle(paste('was.ovd90.12m ~', i.line, '=', i.box),
+              subtitle = paste(i.preapp, ': Average feature importance')) +
+      theme(plot.title = element_text(size = 10, face = "bold"),
+            axis.title.y = element_blank(),
+            axis.text.y = element_text(size = 7.5),
+            panel.grid.major.y = element_blank(),
+            panel.background = element_rect(color = 'darkgreen'),
+            legend.justification=c(1,0),
+            legend.position=c(1,0),
+            legend.background = element_rect(fill=alpha(0.01))) +
+      geom_text(aes(label = paste0(formatC(imp[, PercNA*100],
+                                           format = 'f', digits = 2), "%"),
+                                  y = .00),  size =2.8, hjust = 1, vjust = 0.3) +
+      scale_y_continuous(expand = c(0.1, 0)) + 
+      geom_vline(xintercept = sum(imp[, CumGain] <= .9),
+                 linetype = 2, size = .5, color = 'red') + 
+      annotate('text', x = sum(imp[, CumGain] <= .9),
+               y = max(imp[, Gain]/2), label = '90%', color = 'red',
+               vjust = -.25, hjust = 0)
+  
+  # calculate fig.height and create chunk for plot in main chunk
+  h.expand(max(3, round(imp[, length(Feature)]*.15)), i) 
+  #h.expand(max(3, round(imp[, length(Feature)]*.15)))
+  
+  # get Gain == NA features and create DT
+  imp.na <- DT.f[get(tolower(i.line)) == substr(i, 22, nchar(i)) & is.na(get(i)),
+                 c('Feature', 'descript', p), with = FALSE]
+  imp.na[, names(imp.na)[3] := get(p)*100]
+  
+
+  # FOR RMARKDOWN  
+  ## table with gain features
+  print(knitr::kable(imp[, .(Feature, descript, Gain*100)], format = 'html',
+               caption = paste('Параметры, отражённые на графике',i.line, '=', i.box),
+               col.names = c('Feature', 'Описание', 'Вес, %')) %>%
+          kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                        font_size = 11)
+  )
+  
+  ## table with NA' gain
+  print(knitr::kable(imp.na, format = 'html', 
+               caption = paste('Параметры (',  i.line, '=', i.box, '), никак не влияющие на целевую переменную'),
+               col.names = c('Feature', 'Описание', 'NULL, %')) %>%
+          kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                        font_size = 11)
+  )
+  
+  cat ('************************')
+  cat (sep="\n\n")
+  }
+  rm(x, l, p, i, imp, imp.na, i.preapp, i.line, i.box, clust)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+  

@@ -1,0 +1,1492 @@
+---
+title: "Had Active Credit."
+output:
+  html_document: default
+  html_notebook: default
+---
+### Кредиты наличными.
+#### **Оценка качества выдач от наличия активного кредита в момент подачи заявки и времени с момента его открытия.**
+##### Критерий качества - was.ovd90.12m. 
+
+###### *Галкин Михаил, авг.2017*
+***
+###### *Примечание:  
+ - Брал 0 месяц назад (mon.0)– т.е. с момента взятия кредита прошло от 1 до 30 дней.  
+ - Брал 1 месяц назад (mon.1)– т.е. с момента взятия кредита прошло от 31 до 60 дней и т.д.  
+ - Брал 2 месяц назад (mon.2)– т.е. с момента взятия кредита прошло от 61 до 90 дней и т.д.
+*
+***
+
+```{r Load: Library, message=FALSE, warning=FALSE, include=FALSE}
+# Load libraries
+library(data.table)
+library(ggplot2)
+library(kableExtra)
+library(knitr)
+## global option for chunk
+opts_knit$set(progress = FALSE, verbose = FALSE)
+opts_chunk$set(echo=FALSE, message=FALSE, warning=FALSE)
+```
+
+```{r Load: Data, message=FALSE, warning=FALSE, include=FALSE}
+## 1. Load data
+if (grepl('C:/', getwd()) == 1) {
+  DT <- fread('C:/Users/mi.galkin/Documents/RProjects/201706-UnderOptim/UO.EDA/DT_all.csv',
+              encoding = 'UTF-8', na.strings = c('', 'NA'), stringsAsFactors = FALSE)
+  DT.f <- fread('C:/Users/mi.galkin/Documents/RProjects/201706-UnderOptim/DS_FieldDescript.csv')
+} else {
+  DT <- fread('T:/RProjects/201706-UnderOptim/UO.EDA/DT_all.csv',
+              encoding = 'UTF-8', na.strings = c('', 'NA'), stringsAsFactors = FALSE)
+  DT.f <- fread('T:/RProjects/201706-UnderOptim/DS_FieldDescript.csv')
+}
+```
+
+```{r Tabs: All & All without active, message=FALSE, warning=FALSE, include=FALSE}
+###### PART 1 BEGIN ----
+
+### total default level
+def <- DT[dim.issued == 1, mean(was.ovd90.12m)]*100
+
+### All credits : TAB
+bki.mon.last.active <- DT[dim.issued == 1 & bki.mon.last.active.creditopen >= 0,
+                          .(mean(was.ovd90.12m)*100, .N),
+                          keyby = .(bki.mon.last.active.creditopen)][V1 > 0]
+### All without active : TAB
+bki.mon.last.closed <- DT[dim.issued == 1 &
+                            is.na(bki.mon.last.active.creditopen) &
+                            !(is.na(bki.mon.last.creditopen)),
+                          .(mean(was.ovd90.12m)*100, .N),
+                          keyby = .(bki.mon.last.creditopen)][V1 > 0]
+
+```
+
+#### Исходные данные.
+  - 83 924 выданных кредитов наличными по заявкам за период [03.01.2014 - 30.06.2016]
+  &nbsp;
+
+```{r Tab: Main, echo=FALSE}
+kable(rbind(c('1 : Выдано КН, #',
+        DT[dim.issued ==1, .N]),
+      c('2 : was.ovd90.12m в (1), %',
+        DT[dim.issued == 1, mean(was.ovd90.12m)]*100),
+      c('3 : Имел активный кредит, #',
+        DT[dim.issued == 1 &
+             bki.mon.last.active.creditopen >= 0, .N]),
+      c('4 : Доля (3) в выданных (1), %',
+        DT[dim.issued == 1 &
+                   bki.mon.last.active.creditopen >= 0, .N]/DT[dim.issued ==1, .N]*100),
+      c('5 : was.ovd90.12m в (3), #', DT[dim.issued == 1 &
+                                    bki.mon.last.active.creditopen >= 0 &
+                                    was.ovd90.12m == 1,
+                                  .N]),
+      c('6 : was.ovd90.12m в (3), %', DT[dim.issued == 1 &
+                                    bki.mon.last.active.creditopen >= 0,
+                                  mean(was.ovd90.12m)]*100)
+      ),
+      caption = '',
+      col.names = c('Показатель', 'Значение'),      
+      format.args = list(big.mark = ' '))
+```
+  
+Среди тех клиентов, которые **имели хотя бы 1 активный кредит** на момент заявки, чётко видна зависимость уровня дефолта от количества месяцев прошедших после открытия последнего активного кредита.
+
+```{r Plot: All, echo=FALSE, message=FALSE, warning=FALSE, fig.height = 5, fig.width = 7}
+### All credits : PLOT
+nm.a <- 1+ bki.mon.last.active [which(V1 > def)
+                                 ][bki.mon.last.active.creditopen <= 12,
+                                   max(bki.mon.last.active.creditopen)]
+ggplot(bki.mon.last.active, aes(x = bki.mon.last.active.creditopen, y = V1)) +
+  geom_point(aes(size = N), color = 'red', alpha = .5) +
+  labs(title = '% was.ovd90.12m',
+       subtitle = '~ # месяцев с открытия последнего АКТИВНОГО кредита',
+       x = 'Месяцев, после открытия последнего активного кредита',
+       y = '% was.ovd90.12m') +
+  geom_hline(yintercept = def,
+             linetype = 2, size = 1, color = 'red') +
+  geom_vline(xintercept = nm.a,
+             linetype = 2, size = .5, color = 'blue')+
+  scale_y_continuous(trans = 'sqrt',
+                     breaks = seq(0, bki.mon.last.active[, max(V1)+.5], by = 1)) +
+  scale_x_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(0,
+                                         bki.mon.last.active[, max(N)+1],
+                                         by = 10), nm.a))) +
+  annotate('text', bki.mon.last.active[, max(bki.mon.last.active.creditopen)/2],
+           y = def, label = 'total % was.ovd90.12m', vjust = -.5)
+```
+  
+Среди же тех, кто **не имел ни одного активного кредита** на момент заявки - уровень дефолта ниже среднего и не имеет явной зависимости от прошедшего времени после открытия последнего кредита. Дефолтность выше среднего наблюдается у тех, кто брал кредиты последний раз более чем 5 лет назад.
+
+```{r Plot: All without active, echo=FALSE, message=FALSE, warning=FALSE, fig.height = 5, fig.width = 7}
+### All without active : PLOT
+nm.clsd <- 1 + bki.mon.last.closed [which(V1 > def)
+                                    ][bki.mon.last.creditopen <= 12,
+                                      max(bki.mon.last.creditopen)]
+ggplot(bki.mon.last.closed, aes(x = bki.mon.last.creditopen, y = V1)) +
+  geom_point(aes(size = N), color = 'darkgreen', alpha = .5) +
+  labs(title = '% was.ovd90.12m',
+       subtitle = '~ # месяцев с открытия последнего кредита. Не имел активных',
+       x = 'Месяцев, после открытия последнего кредита',
+       y = '% was.ovd90.12m') +
+  geom_hline(yintercept = def,
+             linetype = 2, size = 1, color = 'red') +
+  geom_vline(xintercept = 60,
+             linetype = 2, size = .5, color = 'blue')+
+  scale_y_continuous(trans = 'sqrt',
+                     breaks = seq(0, bki.mon.last.closed[, max(V1)+.5], by = 2)) +
+  scale_x_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(0,
+                                         bki.mon.last.closed[, max(N)+1],
+                                         by = 10), nm.clsd))) +
+  annotate('text', bki.mon.last.closed[, max(bki.mon.last.creditopen)/2],
+           y = def, label = 'total % was.ovd90.12m', vjust = -.5)
+###### PART 1 END
+```
+  
+
+
+***
+#### Копнём тех, кто имел активные кредиты.  
+По каждому срезу сначала будут показаны диаграммы, затем сразу соответствующие им таблицы, усечённые до давности открытия в 12 месяцев.  
+
+#### Итак:  
+##### Предодобренные vs. Не предодобренные.  
+
+```{r Replace < 0, message=FALSE, warning=FALSE, include=FALSE}
+# REPLACE bki.mon.last.active.creditopen < 0 to NA -----------------------------
+DT[, .N, keyby = .(bki.mon.last.active.creditopen)]
+DT[bki.mon.last.active.creditopen < 0, .(bki.mon.last.active.creditopen)]
+DT[bki.mon.last.active.creditopen < 0, bki.mon.last.active.creditopen := NA]
+DT[, .N, keyby = .(bki.mon.last.active.creditopen)]
+```
+
+```{r Tab: All & preapp1 & preapp0, message=FALSE, warning=FALSE, include=FALSE}
+## 1. All issued
+#### total
+(t <- DT[dim.issued == 1,
+         .(case = 'Выдано КН', .N, 'was90%' = mean(was.ovd90.12m)*100)])
+(t <- cbind(mon.ago = -1, t))
+#### by bki.mon.last.active.creditopen
+(t.iss <- DT[dim.issued == 1,
+             .(case = 'Выдано КН', .N, 'was90%' = mean(was.ovd90.12m)*100),
+             keyby = .(mon.ago = bki.mon.last.active.creditopen)])
+#### bind
+(t.iss <- rbindlist(list(t, t.iss))); rm(t)
+
+
+## 2. All issued & NOT preapproved
+#### total
+(t.preapp0 <- DT[dim.issued == 1 &
+                   dim.preapproved == 'Без предодобренных',
+                 .(case = 'Не гарант', .N, 'was90%' = mean(was.ovd90.12m)*100)])
+(t.preapp0 <- cbind(mon.ago = -1, t.preapp0))
+#### by bki.mon.last.active.creditopen
+(t.iss.preapp0 <- DT[dim.issued == 1 &
+                       dim.preapproved == 'Без предодобренных',
+                     .(case = 'Не гарант', .N, 'was90%' = mean(was.ovd90.12m)*100),
+                     keyby = .(mon.ago = bki.mon.last.active.creditopen)])
+#### bind
+(t.iss.preapp0 <- rbindlist(list(t.preapp0, t.iss.preapp0))); rm(t.preapp0)
+
+
+## 3.  All issued & preapproved
+#### total
+(t.preapp1 <- DT[dim.issued == 1 &
+                   dim.preapproved == 'Предодобренные',
+                 .(case = 'Гарант', .N, 'was90%' = mean(was.ovd90.12m)*100)])
+(t.preapp1 <- cbind(mon.ago = -1, t.preapp1))
+#### by bki.mon.last.active.creditopen
+(t.iss.preapp1 <- DT[dim.issued == 1 &
+                       dim.preapproved == 'Предодобренные',
+                     .(case = 'Гарант', .N, 'was90%' = mean(was.ovd90.12m)*100),
+                     keyby = .(mon.ago = bki.mon.last.active.creditopen)])
+#### bind
+(t.iss.preapp1 <- rbindlist(list(t.preapp1, t.iss.preapp1))); rm(t.preapp1)
+
+
+## 4. Binding 3 tables to one by rows
+(t.iss <- rbindlist(list(t.iss, t.iss.preapp0, t.iss.preapp1), fill = TRUE))
+rm(t.iss.preapp0, t.iss.preapp1)
+
+## 5. Melt & cast & create table
+(t.iss <- t.iss[order(mon.ago, case)])
+
+t.iss[, N := as.character(prettyNum(N, big.mark = ' '))]
+t.iss[, 'was90%' := sapply(.SD, function(x){as.character(round(x, 3))}), .SDcols = 'was90%']
+
+t.iss <- melt(t.iss, id.vars = c('mon.ago', 'case'))
+tab.iss <- dcast(t.iss, case + variable ~ mon.ago)
+### set names & order
+names(tab.iss)
+setnames(tab.iss, c('case', 'variable', 'total',
+                    paste0('mon.',
+                           colnames(tab.iss)[4:(length(colnames(tab.iss))-1)]),
+                    'NO.active'))
+names(tab.iss)
+setcolorder(tab.iss, c(1:3, length(colnames(tab.iss)),
+                       4:(length(colnames(tab.iss))-1)
+))
+```
+
+```{r Plot All issued, echo=FALSE, message=FALSE, warning=FALSE, fig.height = 6, fig.width = 12}
+## 2. Plot ALL ISSUED
+### data
+pl.iss <- 
+  DT[dim.issued == 1, # Предодобренные Без предодобренных
+     .(.N, 'was90' = mean(was.ovd90.12m)*100),
+     keyby = .(mon.ago = bki.mon.last.active.creditopen,
+               case = paste0('', dim.preapproved))
+     ][!is.na(mon.ago), 
+       ][case == 'Missing', case := '*Не указано']
+
+### plot
+ggplot(pl.iss, aes(x = mon.ago, y = was90)) +
+  geom_point(aes(size = N), color = 'maroon2', alpha = .5) +
+  facet_wrap(facets = ~ case) +
+  labs(title = '% was.ovd90.12m',
+       subtitle = 'Все выданные кредиты наличными',
+       x = 'Месяцев, после открытия последнего активного кредита',
+       y = '% was.ovd90.12m') +
+  theme(
+    plot.title = element_text(size = 12, face = 'bold'),
+    plot.subtitle = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    axis.text.x = element_text(size = 9),
+    axis.title.y = element_text(size = 10),
+    axis.text.y = element_text(size = 9),
+    legend.position = 'bottom'
+  ) +
+  geom_hline(yintercept = def,
+             linetype = 2, size = .5, color = 'darkred') +
+  geom_vline(xintercept = 6,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 12,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 24,
+             linetype = 2, size = .5, color = 'blue') +
+  expand_limits(x = 0, y = 0) +
+  scale_y_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(0, pl.iss[, max(was90)+.5], by = 5),
+                                     seq(0, 9, 1)))) +
+  scale_x_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(30, 100, by = 10), 1, 3, 6, 12, 24)),
+                     limits = c(0, 100)) +
+  annotate('text', 0, size = 3, color = 'darkred', vjust = 1, hjust = .4,
+           y = def, label = paste0(round(def, 2), '%'))
+```
+
+```{r Print tab: All, echo=FALSE, message=FALSE, warning=FALSE}
+kable(tab.iss[, names(tab.iss)[1:17], with = FALSE],
+      format = 'html',
+      caption = paste('Кол-во выданных (N) и дефолт (was90%) по ним, по времени после открытия последнего активного кредита'),
+      #format.args = list(digits = 2),
+      col.names = c('Параметр', '~', 'Всего', ' в т.ч. НЕ имел активных',
+                    names(tab.iss)[5:17])
+      ) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                        font_size = 11)
+```
+  
+
+
+***
+##### Предодобренные по Волнам и Top-up.  
+
+```{r Tab: Waves, message=FALSE, warning=FALSE, include=FALSE}
+## 1. Table
+#### total
+(t.iss.wave <-  DT[dim.issued == 1 &
+                     dim.preapproved == 'Предодобренные',
+                   .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                   keyby = .(case = paste0('', wave))])
+(t.iss.wave <- cbind(mon.ago = -1, t.iss.wave))
+#### by bki.mon.last.active.creditopen 
+(t.iss.wave.mon <- DT[dim.issued == 1 &
+                       dim.preapproved == 'Предодобренные',
+                     .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                     keyby = .(mon.ago = bki.mon.last.active.creditopen,
+                               case = paste0('', wave))])
+#### bind total & by...
+(t.iss.wave <- rbindlist(list(t.iss.wave, t.iss.wave.mon))); rm(t.iss.wave.mon)
+
+#### bind missing mon.ago with NA's
+(dif <- setdiff(t.iss[, mon.ago], t.iss.wave[, unique(mon.ago)]))
+(dt <- data.frame(mon.ago = dif,
+                  case = sort(rep(t.iss.wave[, unique(case)],
+                                  length(dif))),
+                  stringsAsFactors = FALSE))
+t.iss.wave <- rbindlist(list(t.iss.wave, dt), use.names = TRUE, fill = TRUE)
+rm(dif, dt)
+
+#### melt & cast 
+(t.iss.wave <- t.iss.wave[order(mon.ago, case)])
+t.iss.wave[, N := as.character(prettyNum(N, big.mark = ' '))]
+t.iss.wave[, 'was90%' := sapply(.SD, function(x){as.character(round(x, 3))}), .SDcols = 'was90%']
+t.iss.wave <- melt(t.iss.wave, id.vars = c('mon.ago', 'case'))
+tab.iss.wave <- dcast(t.iss.wave, case + variable ~ mon.ago)
+
+### set names & order
+names(tab.iss.wave)
+setnames(tab.iss.wave, c('case', 'variable', 'total', 
+                         paste0('mon.',
+                                colnames(tab.iss.wave)[4:(length(colnames(tab.iss.wave))-1)]),
+                         'NO.active'))
+names(tab.iss.wave)
+setcolorder(tab.iss.wave, c(1:3, length(colnames(tab.iss.wave)),
+                       4:(length(colnames(tab.iss.wave))-1)
+))
+names(tab.iss.wave)
+identical(names(tab.iss), names(tab.iss.wave))
+rm(t.iss.wave)
+```
+
+```{r Plot Waves, echo=FALSE, message=FALSE, warning=FALSE, fig.height = 10, fig.width = 12}
+## 2. Plot PREAPPROVED: WAVES & Top-up
+### data
+pl.iss.wave <- 
+DT[dim.issued == 1 &
+     dim.preapproved == 'Предодобренные', # Предодобренные Без предодобренных
+   .(.N, 'was90' = mean(was.ovd90.12m)*100),
+   keyby = .(mon.ago = bki.mon.last.active.creditopen,
+             case = paste0('', wave))
+   ][!is.na(mon.ago), 
+     ][case == 'Missing', case := '*Не указано']
+
+### plot
+ggplot(pl.iss.wave, aes(x = mon.ago, y = was90)) +
+  geom_point(aes(size = N), color = 'blue', alpha = .5) +
+  facet_wrap(facets = ~ case) +
+  labs(title = '% was.ovd90.12m',
+       subtitle = 'Предодобренные :: Top-up & Волны',
+       x = 'Месяцев, после открытия последнего активного кредита',
+       y = '% was.ovd90.12m') +
+  theme(
+    plot.title = element_text(size = 12, face = 'bold'),
+    plot.subtitle = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    axis.text.x = element_text(size = 9),
+    axis.title.y = element_text(size = 10),
+    axis.text.y = element_text(size = 9),
+    legend.position = 'bottom'
+  ) +
+  geom_hline(yintercept = def,
+             linetype = 2, size = .5, color = 'darkred') +
+  geom_vline(xintercept = 6,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 12,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 24,
+             linetype = 2, size = .5, color = 'blue') +
+  expand_limits(x = 0, y = 0) +
+  scale_y_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(0, pl.iss.wave[, max(was90)+.5], by = 10),
+                                   0, 1, 3, 5))) +
+  scale_x_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(30, 100, by = 10), 1, 3, 6, 12, 24)),
+                     limits = c(0, 100)) +
+  annotate('text', 0, size = 3, color = 'darkred', vjust = 1, hjust = .4,
+           y = def, label = paste0(round(def, 2), '%'))
+
+```
+  
+```{r Print tab: Waves, echo=FALSE, message=FALSE, warning=FALSE}
+kable(tab.iss.wave[, names(tab.iss.wave)[1:17], with = FALSE],
+      format = 'html',
+      caption = paste('Кол-во выданных (N) и дефолт (was90%) по ним, по времени после открытия последнего активного кредита'),
+      #format.args = list(digits = 2),
+      col.names = c('Параметр', '~', 'Всего', ' в т.ч. НЕ имел активных',
+                    names(tab.iss.wave)[5:17])
+      ) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                        font_size = 11)
+```
+  
+
+
+***
+#### По типу активного кредита:
+##### Предодобренные.  
+
+```{r Tab: Pred + Type, message=FALSE, warning=FALSE, include=FALSE}
+### total info
+(t.iss.type.preapp1 <- DT[dim.issued == 1 &
+                    dim.preapproved == 'Предодобренные',
+                    .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                  keyby = .(case = paste0('Garant:Type:', bki.last.active.credit.type))])
+(t.iss.type.preapp1 <- cbind(mon.ago = -1, t.iss.type.preapp1))
+#### by bki.mon.last.active.creditopen
+(t.iss.type.preapp1.mon <- DT[dim.issued == 1 &
+                        dim.preapproved == 'Предодобренные',
+                      .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                      keyby = .(mon.ago = bki.mon.last.active.creditopen,
+                                case = paste0('Garant:Type:', bki.last.active.credit.type))])
+#### bind total & by mon.ago
+(t.iss.type.preapp1 <- rbindlist(list(t.iss.type.preapp1, t.iss.type.preapp1.mon))); rm(t.iss.type.preapp1.mon)
+
+#### bind missing mon.ago with NA's
+(dif <- setdiff(t.iss[, mon.ago], t.iss.type.preapp1[, unique(mon.ago)]))
+(dt <- data.frame(mon.ago = dif,
+                  case = sort(rep(t.iss.type.preapp1[, unique(case)],
+                                  length(dif))),
+                  stringsAsFactors = FALSE))
+t.iss.type.preapp1 <- rbindlist(list(t.iss.type.preapp1, dt), use.names = TRUE, fill = TRUE)
+rm(dif, dt)
+#### melt & cast 
+(t.iss.type.preapp1 <- t.iss.type.preapp1[order(mon.ago, case)])
+
+t.iss.type.preapp1[, N := as.character(prettyNum(N, big.mark = ' '))]
+t.iss.type.preapp1[, 'was90%' := sapply(.SD, function(x){as.character(round(x, 3))}), .SDcols = 'was90%']
+
+t.iss.type.preapp1 <- melt(t.iss.type.preapp1, id.vars = c('mon.ago', 'case'))
+tab.iss.type.preapp1 <- dcast(t.iss.type.preapp1, case + variable ~ mon.ago)
+### set names & order
+names(tab.iss.type.preapp1)
+setnames(tab.iss.type.preapp1, c('case', 'variable', 'total', 
+                         paste0('mon.',
+                                colnames(tab.iss.type.preapp1)[4:(length(colnames(tab.iss.type.preapp1))-1)]),
+                         'NO.active'))
+names(tab.iss.type.preapp1)
+setcolorder(tab.iss.type.preapp1, c(1:3, length(colnames(tab.iss.type.preapp1)),
+                            4:(length(colnames(tab.iss.type.preapp1))-1)
+))
+names(tab.iss.type.preapp1)
+identical(names(tab.iss), names(tab.iss.type.preapp1))
+rm(t.iss.type.preapp1)
+```
+
+```{r Plot: Pred + Type, echo=FALSE, message=FALSE, warning=FALSE, fig.height = 8, fig.width = 12}
+## 2. Plot PREAPPROVED: TYPE of last active credit
+### data
+pl.iss.type.preapp1 <- 
+  DT[dim.issued == 1 &
+       dim.preapproved == 'Предодобренные', # Предодобренные Без предодобренных
+     .(.N, 'was90' = mean(was.ovd90.12m)*100),
+     keyby = .(mon.ago = bki.mon.last.active.creditopen,
+               case = paste0('', bki.last.active.credit.type))
+     ][!is.na(mon.ago), 
+       ][case == 'Missing', case := '*Не указано']
+
+### plot
+ggplot(pl.iss.type.preapp1, aes(x = mon.ago, y = was90)) +
+  geom_point(aes(size = N), color = 'blue', alpha = .5) +
+  facet_wrap(facets = ~ case) +
+  labs(title = '% was.ovd90.12m',
+       subtitle = 'Предодобренные :: Тип последнего активного кредита',
+       x = 'Месяцев, после открытия последнего активного кредита',
+       y = '% was.ovd90.12m') +
+  theme(
+    plot.title = element_text(size = 12, face = 'bold'),
+    plot.subtitle = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    axis.text.x = element_text(size = 9),
+    axis.title.y = element_text(size = 10),
+    axis.text.y = element_text(size = 9),
+    legend.position = 'bottom'
+  ) +
+  geom_hline(yintercept = def,
+             linetype = 2, size = .5, color = 'darkred') +
+  geom_vline(xintercept = 6,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 12,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 24,
+             linetype = 2, size = .5, color = 'blue') +
+  expand_limits(x = 0, y = 0) +
+  scale_y_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(0, pl.iss.type.preapp1[, max(was90)+.5], by = 5),
+                                     0, 1, 3, 5))) +
+  scale_x_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(30, 100, by = 10), 1, 3, 6, 12, 24)),
+                     limits = c(0, 100)) +
+  annotate('text', 0, size = 3, color = 'darkred', vjust = 1, hjust = .4,
+           y = def, label = paste0(round(def, 2), '%'))
+```
+  
+```{r Print tab: Pred + Type, echo=FALSE, message=FALSE, warning=FALSE}
+kable(tab.iss.type.preapp1[, names(tab.iss.type.preapp1)[1:17], with = FALSE],
+      format = 'html',
+      caption = paste('Кол-во выданных (N) и дефолт (was90%) по ним, по времени после открытия последнего активного кредита'),
+      #format.args = list(digits = 2),
+      col.names = c('Параметр', '~', 'Всего', ' в т.ч. НЕ имел активных',
+                    names(tab.iss.type.preapp1)[5:17])
+      ) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                        font_size = 11)
+```
+  
+  
+##### НЕ предодобренные.  
+
+```{r Tab: NOTPred + Type, message=FALSE, warning=FALSE, include=FALSE}
+### total info
+(t.iss.type.preapp0 <- DT[dim.issued == 1 &
+                            dim.preapproved == 'Без предодобренных',
+                          .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                          keyby = .(case = paste0('NOT Garant:Type:', bki.last.active.credit.type))])
+(t.iss.type.preapp0 <- cbind(mon.ago = -1, t.iss.type.preapp0))
+#### by bki.mon.last.active.creditopen
+(t.iss.type.preapp0.mon <- DT[dim.issued == 1 &
+                                dim.preapproved == 'Без предодобренных',
+                              .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                              keyby = .(mon.ago = bki.mon.last.active.creditopen,
+                                        case = paste0('NOT Garant:Type:', bki.last.active.credit.type))])
+#### bind total & by mon.ago
+(t.iss.type.preapp0 <- rbindlist(list(t.iss.type.preapp0, t.iss.type.preapp0.mon))); rm(t.iss.type.preapp0.mon)
+
+#### bind missing mon.ago with NA's
+(dif <- setdiff(t.iss[, mon.ago], t.iss.type.preapp0[, unique(mon.ago)]))
+(dt <- data.frame(mon.ago = dif,
+                  case = sort(rep(t.iss.type.preapp0[, unique(case)],
+                                  length(dif))),
+                  stringsAsFactors = FALSE))
+t.iss.type.preapp0 <- rbindlist(list(t.iss.type.preapp0, dt), use.names = TRUE, fill = TRUE)
+rm(dif, dt)
+#### melt & cast 
+(t.iss.type.preapp0 <- t.iss.type.preapp0[order(mon.ago, case)])
+t.iss.type.preapp0[, N := as.character(prettyNum(N, big.mark = ' '))]
+t.iss.type.preapp0[, 'was90%' := sapply(.SD, function(x){as.character(round(x, 3))}), .SDcols = 'was90%']
+t.iss.type.preapp0 <- melt(t.iss.type.preapp0, id.vars = c('mon.ago', 'case'))
+tab.iss.type.preapp0 <- dcast(t.iss.type.preapp0, case + variable ~ mon.ago)
+### set names & order
+names(tab.iss.type.preapp0)
+setnames(tab.iss.type.preapp0, c('case', 'variable', 'total', 
+                                 paste0('mon.',
+                                        colnames(tab.iss.type.preapp0)[4:(length(colnames(tab.iss.type.preapp0))-1)]),
+                                 'NO.active'))
+names(tab.iss.type.preapp0)
+setcolorder(tab.iss.type.preapp0, c(1:3, length(colnames(tab.iss.type.preapp0)),
+                                    4:(length(colnames(tab.iss.type.preapp0))-1)
+))
+names(tab.iss.type.preapp0)
+identical(names(tab.iss), names(tab.iss.type.preapp0))
+rm(t.iss.type.preapp0)
+```
+
+```{r Plot: NOTPred + Type, echo=FALSE, message=FALSE, warning=FALSE, fig.height = 12, fig.width = 12}
+## 2. Plot NOT PREAPPROVED: TYPE of last active credit
+### data
+pl.iss.type.preapp0 <- 
+  DT[dim.issued == 1 &
+       dim.preapproved == 'Без предодобренных', # Предодобренные Без предодобренных
+     .(.N, 'was90' = mean(was.ovd90.12m)*100),
+     keyby = .(mon.ago = bki.mon.last.active.creditopen,
+               case = paste0('', bki.last.active.credit.type))
+     ][!is.na(mon.ago), 
+       ][case == 'Missing', case := '*Не указано']
+
+### plot
+ggplot(pl.iss.type.preapp0, aes(x = mon.ago, y = was90)) +
+  geom_point(aes(size = N), color = 'red', alpha = .5) +
+  facet_wrap(facets = ~ case) +
+  labs(title = '% was.ovd90.12m',
+       subtitle = 'НЕ Предодобренные :: Тип последнего активного кредита',
+       x = 'Месяцев, после открытия последнего активного кредита',
+       y = '% was.ovd90.12m') +
+  theme(
+    plot.title = element_text(size = 12, face = 'bold'),
+    plot.subtitle = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    axis.text.x = element_text(size = 9),
+    axis.title.y = element_text(size = 10),
+    axis.text.y = element_text(size = 9),
+    legend.position = 'bottom'
+  ) +
+  geom_hline(yintercept = def,
+             linetype = 2, size = .5, color = 'darkred') +
+  geom_vline(xintercept = 6,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 12,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 24,
+             linetype = 2, size = .5, color = 'blue') +
+  expand_limits(x = 0, y = 0) +
+  scale_y_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(0, pl.iss.type.preapp0[, max(was90)+.5], by = 5),
+                                     0, 1, 3, 5))) +
+  scale_x_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(30, 100, by = 10), 1, 3, 6, 12, 24)),
+                     limits = c(0, 100)) +
+  annotate('text', 0, size = 3, color = 'darkred', vjust = 1, hjust = .4,
+           y = def, label = paste0(round(def, 2), '%'))
+```
+  
+```{r Print tab: NOTPred + Type, echo=FALSE, message=FALSE, warning=FALSE}
+kable(tab.iss.type.preapp0[, names(tab.iss.type.preapp0)[1:17], with = FALSE],
+      format = 'html',
+      caption = paste('Кол-во выданных (N) и дефолт (was90%) по ним, по времени после открытия последнего активного кредита'),
+      #format.args = list(digits = 2),
+      col.names = c('Параметр', '~', 'Всего', ' в т.ч. НЕ имел активных',
+                    names(tab.iss.type.preapp0)[5:17])
+      ) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                        font_size = 11)
+```
+  
+
+
+***
+#### По принадлежности (true) последнего активного кредита нашему банку:
+##### Предодобренные.  
+
+```{r Tab: Pred + OUR, message=FALSE, warning=FALSE, include=FALSE}
+### total info
+(t.iss.our.preapp1 <- DT[dim.issued == 1 &
+                            dim.preapproved == 'Предодобренные',
+                          .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                          keyby = .(case = paste0('Garant:OurBank:', bki.last.active.credit.ourbank))])
+(t.iss.our.preapp1 <- cbind(mon.ago = -1, t.iss.our.preapp1))
+#### by bki.mon.last.active.creditopen
+(t.iss.our.preapp1.mon <- DT[dim.issued == 1 &
+                                dim.preapproved == 'Предодобренные',
+                              .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                              keyby = .(mon.ago = bki.mon.last.active.creditopen,
+                                        case = paste0('Garant:OurBank:', bki.last.active.credit.ourbank))])
+#### bind total & by mon.ago
+(t.iss.our.preapp1 <- rbindlist(list(t.iss.our.preapp1, t.iss.our.preapp1.mon))); rm(t.iss.our.preapp1.mon)
+
+#### bind missing mon.ago with NA's
+(dif <- setdiff(t.iss[, mon.ago], t.iss.our.preapp1[, unique(mon.ago)]))
+(dt <- data.frame(mon.ago = dif,
+                  case = sort(rep(t.iss.our.preapp1[, unique(case)],
+                                  length(dif))),
+                  stringsAsFactors = FALSE))
+t.iss.our.preapp1 <- rbindlist(list(t.iss.our.preapp1, dt), use.names = TRUE, fill = TRUE)
+rm(dif, dt)
+#### melt & cast 
+(t.iss.our.preapp1 <- t.iss.our.preapp1[order(mon.ago, case)])
+t.iss.our.preapp1[, N := as.character(prettyNum(N, big.mark = ' '))]
+t.iss.our.preapp1[, 'was90%' := sapply(.SD, function(x){as.character(round(x, 3))}), .SDcols = 'was90%']
+t.iss.our.preapp1 <- melt(t.iss.our.preapp1, id.vars = c('mon.ago', 'case'))
+tab.iss.our.preapp1 <- dcast(t.iss.our.preapp1, case + variable ~ mon.ago)
+### set names & order
+names(tab.iss.our.preapp1)
+setnames(tab.iss.our.preapp1, c('case', 'variable', 'total', 
+                                 paste0('mon.',
+                                        colnames(tab.iss.our.preapp1)[4:(length(colnames(tab.iss.our.preapp1))-1)]),
+                                 'NO.active'))
+names(tab.iss.our.preapp1)
+setcolorder(tab.iss.our.preapp1, c(1:3, length(colnames(tab.iss.our.preapp1)),
+                                    4:(length(colnames(tab.iss.our.preapp1))-1)
+))
+names(tab.iss.our.preapp1)
+identical(names(tab.iss), names(tab.iss.our.preapp1))
+rm(t.iss.our.preapp1)
+```
+
+```{r Plot: Pred + OUR, echo=FALSE, message=FALSE, warning=FALSE, fig.height = 6, fig.width = 12}
+## 2. Plot PREAPPROVED: OUR BANK of last active credit
+### data
+pl.iss.our.preapp1 <- 
+  DT[dim.issued == 1 &
+       dim.preapproved == 'Предодобренные', # Предодобренные Без предодобренных
+     .(.N, 'was90' = mean(was.ovd90.12m)*100),
+     keyby = .(mon.ago = bki.mon.last.active.creditopen,
+               case = paste0('', bki.last.active.credit.ourbank))
+     ][!is.na(mon.ago), 
+       ][case == 'Missing', case := '*Не указано']
+
+### plot
+ggplot(pl.iss.our.preapp1, aes(x = mon.ago, y = was90)) +
+  geom_point(aes(size = N), color = 'blue', alpha = .5) +
+  facet_wrap(facets = ~ case) +
+  labs(title = '% was.ovd90.12m',
+       subtitle = 'Предодобренные :: Последний активный кредит взят в нашем банке',
+       x = 'Месяцев, после открытия последнего активного кредита',
+       y = '% was.ovd90.12m') +
+  theme(
+    plot.title = element_text(size = 12, face = 'bold'),
+    plot.subtitle = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    axis.text.x = element_text(size = 9),
+    axis.title.y = element_text(size = 10),
+    axis.text.y = element_text(size = 9),
+    legend.position = 'bottom'
+  ) +
+  geom_hline(yintercept = def,
+             linetype = 2, size = .5, color = 'darkred') +
+  geom_vline(xintercept = 6,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 12,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 24,
+             linetype = 2, size = .5, color = 'blue') +
+  expand_limits(x = 0, y = 0) +
+  scale_y_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(0, pl.iss.our.preapp1[, max(was90)+.5], by = 5),
+                                     0, 1, 3, 5))) +
+  scale_x_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(30, 100, by = 10), 1, 3, 6, 12, 24)),
+                     limits = c(0, 100)) +
+  annotate('text', 0, size = 3, color = 'darkred', vjust = 1, hjust = .4,
+           y = def, label = paste0(round(def, 2), '%'))
+```
+  
+```{r Print tab: Pred + OUR, echo=FALSE, message=FALSE, warning=FALSE}
+kable(tab.iss.our.preapp1[, names(tab.iss.our.preapp1)[1:17], with = FALSE],
+      format = 'html',
+      caption = paste('Кол-во выданных (N) и дефолт (was90%) по ним, по времени после открытия последнего активного кредита'),
+      #format.args = list(digits = 2),
+      col.names = c('Параметр', '~', 'Всего', ' в т.ч. НЕ имел активных',
+                    names(tab.iss.our.preapp1)[5:17])
+      ) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                        font_size = 11)
+```
+  
+  
+##### НЕ предодобренные.  
+
+```{r Tab: NOTPred + OUR, message=FALSE, warning=FALSE, include=FALSE}
+### total info
+(t.iss.our.preapp0 <- DT[dim.issued == 1 &
+                           dim.preapproved == 'Без предодобренных',
+                         .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                         keyby = .(case = paste0('NOT Garant:OurBank:', bki.last.active.credit.ourbank))])
+(t.iss.our.preapp0 <- cbind(mon.ago = -1, t.iss.our.preapp0))
+#### by bki.mon.last.active.creditopen
+(t.iss.our.preapp0.mon <- DT[dim.issued == 1 &
+                               dim.preapproved == 'Без предодобренных',
+                             .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                             keyby = .(mon.ago = bki.mon.last.active.creditopen,
+                                       case = paste0('NOT Garant:OurBank:', bki.last.active.credit.ourbank))])
+#### bind total & by mon.ago
+(t.iss.our.preapp0 <- rbindlist(list(t.iss.our.preapp0, t.iss.our.preapp0.mon))); rm(t.iss.our.preapp0.mon)
+
+#### bind missing mon.ago with NA's
+(dif <- setdiff(t.iss[, mon.ago], t.iss.our.preapp0[, unique(mon.ago)]))
+(dt <- data.frame(mon.ago = dif,
+                  case = sort(rep(t.iss.our.preapp0[, unique(case)],
+                                  length(dif))),
+                  stringsAsFactors = FALSE))
+t.iss.our.preapp0 <- rbindlist(list(t.iss.our.preapp0, dt), use.names = TRUE, fill = TRUE)
+rm(dif, dt)
+#### melt & cast 
+(t.iss.our.preapp0 <- t.iss.our.preapp0[order(mon.ago, case)])
+t.iss.our.preapp0[, N := as.character(prettyNum(N, big.mark = ' '))]
+t.iss.our.preapp0[, 'was90%' := sapply(.SD, function(x){as.character(round(x, 3))}), .SDcols = 'was90%']
+t.iss.our.preapp0 <- melt(t.iss.our.preapp0, id.vars = c('mon.ago', 'case'))
+tab.iss.our.preapp0 <- dcast(t.iss.our.preapp0, case + variable ~ mon.ago)
+### set names & order
+names(tab.iss.our.preapp0)
+setnames(tab.iss.our.preapp0, c('case', 'variable', 'total', 
+                                paste0('mon.',
+                                       colnames(tab.iss.our.preapp0)[4:(length(colnames(tab.iss.our.preapp0))-1)]),
+                                'NO.active'))
+names(tab.iss.our.preapp0)
+setcolorder(tab.iss.our.preapp0, c(1:3, length(colnames(tab.iss.our.preapp0)),
+                                   4:(length(colnames(tab.iss.our.preapp0))-1)
+))
+names(tab.iss.our.preapp0)
+identical(names(tab.iss), names(tab.iss.our.preapp0))
+rm(t.iss.our.preapp0)
+```
+
+```{r Plot: NOTPred + OUR, echo=FALSE, message=FALSE, warning=FALSE, fig.height = 6, fig.width = 12}
+## 2. Plot NOT PREAPPROVED: OUR BANK of last active credit
+### data
+pl.iss.our.preapp0 <- 
+  DT[dim.issued == 1 &
+       dim.preapproved == 'Без предодобренных', # Предодобренные Без предодобренных
+     .(.N, 'was90' = mean(was.ovd90.12m)*100),
+     keyby = .(mon.ago = bki.mon.last.active.creditopen,
+               case = paste0('', bki.last.active.credit.ourbank))
+     ][!is.na(mon.ago), 
+       ][case == 'Missing', case := '*Не указано']
+
+### plot
+ggplot(pl.iss.our.preapp0, aes(x = mon.ago, y = was90)) +
+  geom_point(aes(size = N), color = 'red', alpha = .5) +
+  facet_wrap(facets = ~ case) +
+  labs(title = '% was.ovd90.12m',
+       subtitle = 'НЕ Предодобренные :: Последний активный кредит взят в нашем банке',
+       x = 'Месяцев, после открытия последнего активного кредита',
+       y = '% was.ovd90.12m') +
+  theme(
+    plot.title = element_text(size = 12, face = 'bold'),
+    plot.subtitle = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    axis.text.x = element_text(size = 9),
+    axis.title.y = element_text(size = 10),
+    axis.text.y = element_text(size = 9),
+    legend.position = 'bottom'
+  ) +
+  geom_hline(yintercept = def,
+             linetype = 2, size = .5, color = 'darkred') +
+  geom_vline(xintercept = 6,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 12,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 24,
+             linetype = 2, size = .5, color = 'blue') +
+  expand_limits(x = 0, y = 0) +
+  scale_y_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(0, pl.iss.our.preapp0[, max(was90)+.5], by = 5),
+                                     0, 1, 3, 5))) +
+  scale_x_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(30, 100, by = 10), 1, 3, 6, 12, 24)),
+                     limits = c(0, 100)) +
+  annotate('text', 0, size = 3, color = 'darkred', vjust = 1, hjust = .4,
+           y = def, label = paste0(round(def, 2), '%'))
+```
+  
+```{r Print tab: NOTPred + OUR, echo=FALSE, message=FALSE, warning=FALSE}
+kable(tab.iss.our.preapp0[, names(tab.iss.our.preapp0)[1:17], with = FALSE],
+      format = 'html',
+      caption = paste('Кол-во выданных (N) и дефолт (was90%) по ним, по времени после открытия последнего активного кредита'),
+      #format.args = list(digits = 2),
+      col.names = c('Параметр', '~', 'Всего', ' в т.ч. НЕ имел активных',
+                    names(tab.iss.our.preapp0)[5:17])
+      ) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                        font_size = 11)
+```
+  
+
+
+***
+#### По сегментам:
+##### Предодобренные.  
+
+```{r Tab: Pred + SEGMENT, message=FALSE, warning=FALSE, include=FALSE}
+### total info
+(t.iss.segment.preapp1 <- DT[dim.issued == 1 &
+                           dim.preapproved == 'Предодобренные',
+                         .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                         keyby = .(case = paste0('Garant:', dim.segment))])
+(t.iss.segment.preapp1 <- cbind(mon.ago = -1, t.iss.segment.preapp1))
+#### by bki.mon.last.active.creditopen
+(t.iss.segment.preapp1.mon <- DT[dim.issued == 1 &
+                               dim.preapproved == 'Предодобренные',
+                             .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                             keyby = .(mon.ago = bki.mon.last.active.creditopen,
+                                       case = paste0('Garant:', dim.segment))])
+#### bind total & by mon.ago
+(t.iss.segment.preapp1 <- rbindlist(list(t.iss.segment.preapp1, t.iss.segment.preapp1.mon))); rm(t.iss.segment.preapp1.mon)
+
+#### bind missing mon.ago with NA's
+(dif <- setdiff(t.iss[, mon.ago], t.iss.segment.preapp1[, unique(mon.ago)]))
+(dt <- data.frame(mon.ago = dif,
+                  case = sort(rep(t.iss.segment.preapp1[, unique(case)],
+                                  length(dif))),
+                  stringsAsFactors = FALSE))
+t.iss.segment.preapp1 <- rbindlist(list(t.iss.segment.preapp1, dt), use.names = TRUE, fill = TRUE)
+rm(dif, dt)
+#### melt & cast 
+(t.iss.segment.preapp1 <- t.iss.segment.preapp1[order(mon.ago, case)])
+t.iss.segment.preapp1[, N := as.character(prettyNum(N, big.mark = ' '))]
+t.iss.segment.preapp1[, 'was90%' := sapply(.SD, function(x){as.character(round(x, 3))}), .SDcols = 'was90%']
+t.iss.segment.preapp1 <- melt(t.iss.segment.preapp1, id.vars = c('mon.ago', 'case'))
+tab.iss.segment.preapp1 <- dcast(t.iss.segment.preapp1, case + variable ~ mon.ago)
+### set names & order
+names(tab.iss.segment.preapp1)
+setnames(tab.iss.segment.preapp1, c('case', 'variable', 'total', 
+                                paste0('mon.',
+                                       colnames(tab.iss.segment.preapp1)[4:(length(colnames(tab.iss.segment.preapp1))-1)]),
+                                'NO.active'))
+names(tab.iss.segment.preapp1)
+setcolorder(tab.iss.segment.preapp1, c(1:3, length(colnames(tab.iss.segment.preapp1)),
+                                   4:(length(colnames(tab.iss.segment.preapp1))-1)
+))
+names(tab.iss.segment.preapp1)
+identical(names(tab.iss), names(tab.iss.segment.preapp1))
+rm(t.iss.segment.preapp1)
+```
+
+```{r Plot: Pred + SEGMENT, echo=FALSE, message=FALSE, warning=FALSE, fig.height = 8, fig.width = 12}
+## 2. Plot PREAPPROVED: by SEGMENT
+### data
+pl.iss.segment.preapp1 <- 
+  DT[dim.issued == 1 &
+       dim.preapproved == 'Предодобренные', # Предодобренные Без предодобренных
+     .(.N, 'was90' = mean(was.ovd90.12m)*100),
+     keyby = .(mon.ago = bki.mon.last.active.creditopen,
+               case = paste0('', dim.segment))
+     ][!is.na(mon.ago), 
+       ][case == 'Missing', case := '*Не указано']
+
+### plot
+ggplot(pl.iss.segment.preapp1, aes(x = mon.ago, y = was90)) +
+  geom_point(aes(size = N), color = 'blue', alpha = .5) +
+  facet_wrap(facets = ~ case) +
+  labs(title = '% was.ovd90.12m',
+       subtitle = 'Предодобренные :: Сегмент',
+       x = 'Месяцев, после открытия последнего активного кредита',
+       y = '% was.ovd90.12m') +
+  theme(
+    plot.title = element_text(size = 12, face = 'bold'),
+    plot.subtitle = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    axis.text.x = element_text(size = 9),
+    axis.title.y = element_text(size = 10),
+    axis.text.y = element_text(size = 9),
+    legend.position = 'bottom'
+  ) +
+  geom_hline(yintercept = def,
+             linetype = 2, size = .5, color = 'darkred') +
+  geom_vline(xintercept = 6,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 12,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 24,
+             linetype = 2, size = .5, color = 'blue') +
+  expand_limits(x = 0, y = 0) +
+  scale_y_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(0, pl.iss.segment.preapp1[, max(was90)+.5], by = 5),
+                                     0, 1, 3, 5))) +
+  scale_x_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(30, 100, by = 10), 1, 3, 6, 12, 24)),
+                     limits = c(0, 100)) +
+  annotate('text', 0, size = 3, color = 'darkred', vjust = 1, hjust = .4,
+           y = def, label = paste0(round(def, 2), '%'))
+```
+  
+```{r Print tab: Pred + SEGMENT, echo=FALSE, message=FALSE, warning=FALSE}
+kable(tab.iss.segment.preapp1[, names(tab.iss.segment.preapp1)[1:17], with = FALSE],
+      format = 'html',
+      caption = paste('Кол-во выданных (N) и дефолт (was90%) по ним, по времени после открытия последнего активного кредита'),
+      #format.args = list(digits = 2),
+      col.names = c('Параметр', '~', 'Всего', ' в т.ч. НЕ имел активных',
+                    names(tab.iss.segment.preapp1)[5:17])
+      ) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                        font_size = 11)
+```
+  
+  
+##### НЕ предодобренные.  
+
+```{r Tab: NOTPred + SEGMENT, message=FALSE, warning=FALSE, include=FALSE}
+### total info
+(t.iss.segment.preapp0 <- DT[dim.issued == 1 &
+                               dim.preapproved == 'Без предодобренных',
+                             .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                             keyby = .(case = paste0('NOT Garant:', dim.segment))])
+(t.iss.segment.preapp0 <- cbind(mon.ago = -1, t.iss.segment.preapp0))
+#### by bki.mon.last.active.creditopen
+(t.iss.segment.preapp0.mon <- DT[dim.issued == 1 &
+                                   dim.preapproved == 'Без предодобренных',
+                                 .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                                 keyby = .(mon.ago = bki.mon.last.active.creditopen,
+                                           case = paste0('NOT Garant:', dim.segment))])
+#### bind total & by mon.ago
+(t.iss.segment.preapp0 <- rbindlist(list(t.iss.segment.preapp0, t.iss.segment.preapp0.mon))); rm(t.iss.segment.preapp0.mon)
+
+#### bind missing mon.ago with NA's
+(dif <- setdiff(t.iss[, mon.ago], t.iss.segment.preapp0[, unique(mon.ago)]))
+(dt <- data.frame(mon.ago = dif,
+                  case = sort(rep(t.iss.segment.preapp0[, unique(case)],
+                                  length(dif))),
+                  stringsAsFactors = FALSE))
+t.iss.segment.preapp0 <- rbindlist(list(t.iss.segment.preapp0, dt), use.names = TRUE, fill = TRUE)
+rm(dif, dt)
+#### melt & cast 
+(t.iss.segment.preapp0 <- t.iss.segment.preapp0[order(mon.ago, case)])
+t.iss.segment.preapp0[, N := as.character(prettyNum(N, big.mark = ' '))]
+t.iss.segment.preapp0[, 'was90%' := sapply(.SD, function(x){as.character(round(x, 3))}), .SDcols = 'was90%']
+t.iss.segment.preapp0 <- melt(t.iss.segment.preapp0, id.vars = c('mon.ago', 'case'))
+tab.iss.segment.preapp0 <- dcast(t.iss.segment.preapp0, case + variable ~ mon.ago)
+### set names & order
+names(tab.iss.segment.preapp0)
+setnames(tab.iss.segment.preapp0, c('case', 'variable', 'total', 
+                                    paste0('mon.',
+                                           colnames(tab.iss.segment.preapp0)[4:(length(colnames(tab.iss.segment.preapp0))-1)]),
+                                    'NO.active'))
+names(tab.iss.segment.preapp0)
+setcolorder(tab.iss.segment.preapp0, c(1:3, length(colnames(tab.iss.segment.preapp0)),
+                                       4:(length(colnames(tab.iss.segment.preapp0))-1)
+))
+names(tab.iss.segment.preapp0)
+identical(names(tab.iss), names(tab.iss.segment.preapp0))
+rm(t.iss.segment.preapp0)
+```
+
+```{r Plot: NOTPred + SEGMENT, echo=FALSE, message=FALSE, warning=FALSE, fig.height = 8, fig.width = 12}
+## 2. Plot NOT PREAPPROVED: by SEGMENT
+### data
+pl.iss.segment.preapp0 <- 
+  DT[dim.issued == 1 &
+       dim.preapproved == 'Без предодобренных', # Предодобренные Без предодобренных
+     .(.N, 'was90' = mean(was.ovd90.12m)*100),
+     keyby = .(mon.ago = bki.mon.last.active.creditopen,
+               case = paste0('', dim.segment))
+     ][!is.na(mon.ago), 
+       ][case == 'Missing', case := '*Не указано']
+
+### plot
+ggplot(pl.iss.segment.preapp0, aes(x = mon.ago, y = was90)) +
+  geom_point(aes(size = N), color = 'red', alpha = .5) +
+  facet_wrap(facets = ~ case) +
+  labs(title = '% was.ovd90.12m',
+       subtitle = 'НЕ Предодобренные :: Сегмент',
+       x = 'Месяцев, после открытия последнего активного кредита',
+       y = '% was.ovd90.12m') +
+  theme(
+    plot.title = element_text(size = 12, face = 'bold'),
+    plot.subtitle = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    axis.text.x = element_text(size = 9),
+    axis.title.y = element_text(size = 10),
+    axis.text.y = element_text(size = 9),
+    legend.position = 'bottom'
+  ) +
+  geom_hline(yintercept = def,
+             linetype = 2, size = .5, color = 'darkred') +
+  geom_vline(xintercept = 6,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 12,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 24,
+             linetype = 2, size = .5, color = 'blue') +
+  expand_limits(x = 0, y = 0) +
+  scale_y_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(0, pl.iss.segment.preapp0[, max(was90)+.5], by = 5),
+                                     0, 1, 3, 5))) +
+  scale_x_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(30, 100, by = 10), 1, 3, 6, 12, 24)),
+                     limits = c(0, 100)) +
+  annotate('text', 0, size = 3, color = 'darkred', vjust = 1, hjust = .4,
+           y = def, label = paste0(round(def, 2), '%'))
+```
+  
+```{r Print tab: NOTPred + SEGMENT, echo=FALSE, message=FALSE, warning=FALSE}
+kable(tab.iss.segment.preapp0[, names(tab.iss.segment.preapp0)[1:17], with = FALSE],
+      format = 'html',
+      caption = paste('Кол-во выданных (N) и дефолт (was90%) по ним, по времени после открытия последнего активного кредита'),
+      #format.args = list(digits = 2),
+      col.names = c('Параметр', '~', 'Всего', ' в т.ч. НЕ имел активных',
+                    names(tab.iss.segment.preapp0)[5:17])
+      ) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                        font_size = 11)
+```
+  
+
+
+
+***
+#### По DBR расчитанному в РАБИС:
+##### Предодобренные.  
+
+```{r Tab: Pred + DBR, message=FALSE, warning=FALSE, include=FALSE}
+### total info
+(t.iss.dbr.preapp1 <- DT[dim.issued == 1 &
+                             dim.preapproved == 'Предодобренные',
+                           .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                           keyby = .(case = paste0('Garant:DBR:', dbr.name))])
+(t.iss.dbr.preapp1 <- cbind(mon.ago = -1, t.iss.dbr.preapp1))
+#### by bki.mon.last.active.creditopen
+(t.iss.dbr.preapp1.mon <- DT[dim.issued == 1 &
+                                 dim.preapproved == 'Предодобренные',
+                               .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                               keyby = .(mon.ago = bki.mon.last.active.creditopen,
+                                         case = paste0('Garant:DBR:', dbr.name))])
+#### bind total & by mon.ago
+(t.iss.dbr.preapp1 <- rbindlist(list(t.iss.dbr.preapp1, t.iss.dbr.preapp1.mon))); rm(t.iss.dbr.preapp1.mon)
+
+#### bind missing mon.ago with NA's
+(dif <- setdiff(t.iss[, mon.ago], t.iss.dbr.preapp1[, unique(mon.ago)]))
+(dt <- data.frame(mon.ago = dif,
+                  case = sort(rep(t.iss.dbr.preapp1[, unique(case)],
+                                  length(dif))),
+                  stringsAsFactors = FALSE))
+t.iss.dbr.preapp1 <- rbindlist(list(t.iss.dbr.preapp1, dt), use.names = TRUE, fill = TRUE)
+rm(dif, dt)
+#### melt & cast 
+(t.iss.dbr.preapp1 <- t.iss.dbr.preapp1[order(mon.ago, case)])
+t.iss.dbr.preapp1[, N := as.character(prettyNum(N, big.mark = ' '))]
+t.iss.dbr.preapp1[, 'was90%' := sapply(.SD, function(x){as.character(round(x, 3))}), .SDcols = 'was90%']
+t.iss.dbr.preapp1 <- melt(t.iss.dbr.preapp1, id.vars = c('mon.ago', 'case'))
+tab.iss.dbr.preapp1 <- dcast(t.iss.dbr.preapp1, case + variable ~ mon.ago)
+### set names & order
+names(tab.iss.dbr.preapp1)
+setnames(tab.iss.dbr.preapp1, c('case', 'variable', 'total', 
+                                  paste0('mon.',
+                                         colnames(tab.iss.dbr.preapp1)[4:(length(colnames(tab.iss.dbr.preapp1))-1)]),
+                                  'NO.active'))
+names(tab.iss.dbr.preapp1)
+setcolorder(tab.iss.dbr.preapp1, c(1:3, length(colnames(tab.iss.dbr.preapp1)),
+                                     4:(length(colnames(tab.iss.dbr.preapp1))-1)
+))
+names(tab.iss.dbr.preapp1)
+identical(names(tab.iss), names(tab.iss.dbr.preapp1))
+rm(t.iss.dbr.preapp1)
+```
+
+```{r Plot: Pred + DBR, echo=FALSE, message=FALSE, warning=FALSE, fig.height = 12, fig.width = 12}
+## 2. Plot PREAPPROVED: by DBR
+### data
+pl.iss.dbr.preapp1 <- 
+  DT[dim.issued == 1 &
+       dim.preapproved == 'Предодобренные', # Предодобренные Без предодобренных
+     .(.N, 'was90' = mean(was.ovd90.12m)*100),
+     keyby = .(mon.ago = bki.mon.last.active.creditopen,
+               case = paste0('', dbr.name))
+     ][!is.na(mon.ago), 
+       ][case == 'Missing', case := '*Не указано']
+
+### plot
+ggplot(pl.iss.dbr.preapp1, aes(x = mon.ago, y = was90)) +
+  geom_point(aes(size = N), color = 'blue', alpha = .5) +
+  facet_wrap(facets = ~ case) +
+  labs(title = '% was.ovd90.12m',
+       subtitle = 'Предодобренные :: DBR',
+       x = 'Месяцев, после открытия последнего активного кредита',
+       y = '% was.ovd90.12m') +
+  theme(
+    plot.title = element_text(size = 12, face = 'bold'),
+    plot.subtitle = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    axis.text.x = element_text(size = 9),
+    axis.title.y = element_text(size = 10),
+    axis.text.y = element_text(size = 9),
+    legend.position = 'bottom'
+  ) +
+  geom_hline(yintercept = def,
+             linetype = 2, size = .5, color = 'darkred') +
+  geom_vline(xintercept = 6,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 12,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 24,
+             linetype = 2, size = .5, color = 'blue') +
+  expand_limits(x = 0, y = 0) +
+  scale_y_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(0, pl.iss.dbr.preapp1[, max(was90)+.5], by = 5),
+                                     0, 1, 3, 5))) +
+  scale_x_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(30, 100, by = 10), 1, 3, 6, 12, 24)),
+                     limits = c(0, 100)) +
+  annotate('text', 0, size = 3, color = 'darkred', vjust = 1, hjust = .4,
+           y = def, label = paste0(round(def, 2), '%'))
+```
+  
+```{r Print tab: Pred + DBR, echo=FALSE, message=FALSE, warning=FALSE}
+kable(tab.iss.dbr.preapp1[, names(tab.iss.dbr.preapp1)[1:17], with = FALSE],
+      format = 'html',
+      caption = paste('Кол-во выданных (N) и дефолт (was90%) по ним, по времени после открытия последнего активного кредита'),
+      #format.args = list(digits = 2),
+      col.names = c('Параметр', '~', 'Всего', ' в т.ч. НЕ имел активных',
+                    names(tab.iss.dbr.preapp1)[5:17])
+      ) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                        font_size = 11)
+```
+  
+  
+##### НЕ предодобренные.  
+
+```{r Tab: NOTPred + DBR, message=FALSE, warning=FALSE, include=FALSE}
+### total info
+(t.iss.dbr.preapp0 <- DT[dim.issued == 1 &
+                           dim.preapproved == 'Без предодобренных',
+                         .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                         keyby = .(case = paste0('NOT Garant:DBR:', dbr.name))])
+(t.iss.dbr.preapp0 <- cbind(mon.ago = -1, t.iss.dbr.preapp0))
+#### by bki.mon.last.active.creditopen
+(t.iss.dbr.preapp0.mon <- DT[dim.issued == 1 &
+                               dim.preapproved == 'Без предодобренных',
+                             .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                             keyby = .(mon.ago = bki.mon.last.active.creditopen,
+                                       case = paste0('NOT Garant:DBR:', dbr.name))])
+#### bind total & by mon.ago
+(t.iss.dbr.preapp0 <- rbindlist(list(t.iss.dbr.preapp0, t.iss.dbr.preapp0.mon))); rm(t.iss.dbr.preapp0.mon)
+
+#### bind missing mon.ago with NA's
+(dif <- setdiff(t.iss[, mon.ago], t.iss.dbr.preapp0[, unique(mon.ago)]))
+(dt <- data.frame(mon.ago = dif,
+                  case = sort(rep(t.iss.dbr.preapp0[, unique(case)],
+                                  length(dif))),
+                  stringsAsFactors = FALSE))
+t.iss.dbr.preapp0 <- rbindlist(list(t.iss.dbr.preapp0, dt), use.names = TRUE, fill = TRUE)
+rm(dif, dt)
+#### melt & cast 
+(t.iss.dbr.preapp0 <- t.iss.dbr.preapp0[order(mon.ago, case)])
+t.iss.dbr.preapp0[, N := as.character(prettyNum(N, big.mark = ' '))]
+t.iss.dbr.preapp0[, 'was90%' := sapply(.SD, function(x){as.character(round(x, 3))}), .SDcols = 'was90%']
+t.iss.dbr.preapp0 <- melt(t.iss.dbr.preapp0, id.vars = c('mon.ago', 'case'))
+tab.iss.dbr.preapp0 <- dcast(t.iss.dbr.preapp0, case + variable ~ mon.ago)
+### set names & order
+names(tab.iss.dbr.preapp0)
+setnames(tab.iss.dbr.preapp0, c('case', 'variable', 'total', 
+                                paste0('mon.',
+                                       colnames(tab.iss.dbr.preapp0)[4:(length(colnames(tab.iss.dbr.preapp0))-1)]),
+                                'NO.active'))
+names(tab.iss.dbr.preapp0)
+setcolorder(tab.iss.dbr.preapp0, c(1:3, length(colnames(tab.iss.dbr.preapp0)),
+                                   4:(length(colnames(tab.iss.dbr.preapp0))-1)
+))
+names(tab.iss.dbr.preapp0)
+identical(names(tab.iss), names(tab.iss.dbr.preapp0))
+rm(t.iss.dbr.preapp0)
+```
+
+```{r Plot: NOTPred + DBR, echo=FALSE, message=FALSE, warning=FALSE, fig.height = 12, fig.width = 12}
+## 2. Plot NOT PREAPPROVED: by DBR
+### data
+pl.iss.dbr.preapp0 <- 
+  DT[dim.issued == 1 &
+       dim.preapproved == 'Без предодобренных', # Предодобренные Без предодобренных
+     .(.N, 'was90' = mean(was.ovd90.12m)*100),
+     keyby = .(mon.ago = bki.mon.last.active.creditopen,
+               case = paste0('', dbr.name))
+     ][!is.na(mon.ago), 
+       ][case == 'Missing', case := '*Не указано']
+
+### plot
+ggplot(pl.iss.dbr.preapp0, aes(x = mon.ago, y = was90)) +
+  geom_point(aes(size = N), color = 'red', alpha = .5) +
+  facet_wrap(facets = ~ case) +
+  labs(title = '% was.ovd90.12m',
+       subtitle = 'НЕ Предодобренные :: DBR',
+       x = 'Месяцев, после открытия последнего активного кредита',
+       y = '% was.ovd90.12m') +
+  theme(
+    plot.title = element_text(size = 12, face = 'bold'),
+    plot.subtitle = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    axis.text.x = element_text(size = 9),
+    axis.title.y = element_text(size = 10),
+    axis.text.y = element_text(size = 9),
+    legend.position = 'bottom'
+  ) +
+  geom_hline(yintercept = def,
+             linetype = 2, size = .5, color = 'darkred') +
+  geom_vline(xintercept = 6,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 12,
+             linetype = 2, size = .5, color = 'blue') +
+  geom_vline(xintercept = 24,
+             linetype = 2, size = .5, color = 'blue') +
+  expand_limits(x = 0, y = 0) +
+  scale_y_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(0, pl.iss.dbr.preapp0[, max(was90)+.5], by = 5),
+                                     0, 1, 3, 5))) +
+  scale_x_continuous(trans = 'sqrt',
+                     breaks = sort(c(seq(30, 100, by = 10), 1, 3, 6, 12, 24)),
+                     limits = c(0, 100)) +
+  annotate('text', 0, size = 3, color = 'darkred', vjust = 1, hjust = .4,
+           y = def, label = paste0(round(def, 2), '%'))
+```
+  
+```{r Print tab: NOTPred + DBR, echo=FALSE, message=FALSE, warning=FALSE}
+kable(tab.iss.dbr.preapp0[, names(tab.iss.dbr.preapp0)[1:17], with = FALSE],
+      format = 'html',
+      caption = paste('Кол-во выданных (N) и дефолт (was90%) по ним, по времени после открытия последнего активного кредита'),
+      #format.args = list(digits = 2),
+      col.names = c('Параметр', '~', 'Всего', ' в т.ч. НЕ имел активных',
+                    names(tab.iss.dbr.preapp0)[5:17])
+      ) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                        font_size = 11)
+```
+  
+
+
+
+***
+#### По количеству активных кредитов на момент заявки:
+##### Предодобренные.  
+
+```{r Tab: Pred + COUNT, message=FALSE, warning=FALSE, include=FALSE}
+### total info
+(t.iss.count.preapp1 <- DT[dim.issued == 1 &
+                               dim.preapproved == 'Предодобренные',
+                             .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                             keyby = .(case = paste0('Garant:Count active:', amount.of.active.credit.bch))])
+(t.iss.count.preapp1 <- cbind(mon.ago = -1, t.iss.count.preapp1))
+#### by bki.mon.last.active.creditopen
+(t.iss.count.preapp1.mon <- DT[dim.issued == 1 &
+                                   dim.preapproved == 'Предодобренные',
+                                 .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                                 keyby = .(mon.ago = bki.mon.last.active.creditopen,
+                                           case = paste0('Garant:Count active:', amount.of.active.credit.bch))])
+#### bind total & by mon.ago
+(t.iss.count.preapp1 <- rbindlist(list(t.iss.count.preapp1, t.iss.count.preapp1.mon))); rm(t.iss.count.preapp1.mon)
+
+#### bind missing mon.ago with NA's
+(dif <- setdiff(t.iss[, mon.ago], t.iss.count.preapp1[, unique(mon.ago)]))
+(dt <- data.frame(mon.ago = dif,
+                  case = sort(rep(t.iss.count.preapp1[, unique(case)],
+                                  length(dif))),
+                  stringsAsFactors = FALSE))
+t.iss.count.preapp1 <- rbindlist(list(t.iss.count.preapp1, dt), use.names = TRUE, fill = TRUE)
+rm(dif, dt)
+#### melt & cast 
+(t.iss.count.preapp1 <- t.iss.count.preapp1[order(mon.ago, case)])
+t.iss.count.preapp1[, N := as.character(prettyNum(N, big.mark = ' '))]
+t.iss.count.preapp1[, 'was90%' := sapply(.SD, function(x){as.character(round(x, 3))}), .SDcols = 'was90%']
+t.iss.count.preapp1 <- melt(t.iss.count.preapp1, id.vars = c('mon.ago', 'case'))
+tab.iss.count.preapp1 <- dcast(t.iss.count.preapp1, case + variable ~ mon.ago)
+### set names & order
+names(tab.iss.count.preapp1)
+setnames(tab.iss.count.preapp1, c('case', 'variable', 'total', 
+                                    paste0('mon.',
+                                           colnames(tab.iss.count.preapp1)[4:(length(colnames(tab.iss.count.preapp1))-1)]),
+                                    'NO.active'))
+names(tab.iss.count.preapp1)
+setcolorder(tab.iss.count.preapp1, c(1:3, length(colnames(tab.iss.count.preapp1)),
+                                       4:(length(colnames(tab.iss.count.preapp1))-1)
+))
+names(tab.iss.count.preapp1)
+identical(names(tab.iss), names(tab.iss.count.preapp1))
+rm(t.iss.count.preapp1)
+```
+
+```{r Plot: Pred + COUNT, echo=FALSE, message=FALSE, warning=FALSE, fig.height = 6, fig.width = 12}
+## 2. Plot PREAPPROVED: by COUNT of active credit
+### data
+pl.iss.count.preapp1 <- 
+  DT[dim.issued == 1 &
+       dim.preapproved == 'Предодобренные', # Предодобренные Без предодобренных
+     .(.N, 'was90' = mean(was.ovd90.12m)*100),
+     keyby = .(mon.ago = bki.mon.last.active.creditopen,
+               case = paste0('', amount.of.active.credit.bch))
+     ][!is.na(mon.ago),
+       ][case != 'NA',
+         ][, case := as.integer(case)
+           ][, was90.cut := cut(was90, c(0, 1, 2, def, 5, 10, 20, 100),
+                                right = FALSE, include.lowest = TRUE)]
+#pl.iss.count.preapp1[, .(.N, mean(was90)), keyby = .(was90.cut)]
+
+### plot
+ggplot(pl.iss.count.preapp1, aes(x = mon.ago, y = case)) +
+  geom_tile(aes(fill = was90.cut), colour = 'white') +
+  scale_fill_manual(name = '%was90', 
+                    values = c('greenyellow', 'green', 'darkgreen',
+                               'tomato', 'red', 'darkred', 'gray0')) +
+  labs(title = '% was.ovd90.12m',
+       subtitle = 'Предодобренные :: Количество активных кредитов',
+       x = 'Месяцев, после открытия последнего активного кредита',
+       y = '# активных кредитов') +
+  theme(
+    plot.title = element_text(size = 12, face = 'bold'),
+    plot.subtitle = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    axis.text.x = element_text(size = 9),
+    axis.title.y = element_text(size = 10),
+    axis.text.y = element_text(size = 9),
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 9)
+  ) +
+  scale_y_continuous(breaks = seq(0, pl.iss.count.preapp1[, max(case, na.rm = TRUE)],
+                                  by = 1)) +
+  scale_x_continuous(breaks = seq(0, 102, by = 3), limits = c(-1, 102))
+```
+   
+```{r Print tab: Pred + COUNT, echo=FALSE, message=FALSE, warning=FALSE}
+kable(tab.iss.count.preapp1[, names(tab.iss.count.preapp1)[1:17], with = FALSE],
+      format = 'html',
+      caption = paste('Кол-во выданных (N) и дефолт (was90%) по ним, по времени после открытия последнего активного кредита'),
+      #format.args = list(digits = 2),
+      col.names = c('Параметр', '~', 'Всего', ' в т.ч. НЕ имел активных',
+                    names(tab.iss.count.preapp1)[5:17])
+      ) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                        font_size = 11)
+```
+  
+  
+##### НЕ предодобренные.  
+
+```{r Tab: NOT Pred + COUNT, message=FALSE, warning=FALSE, include=FALSE}
+### total info
+(t.iss.count.preapp0 <- DT[dim.issued == 1 &
+                             dim.preapproved == 'Без предодобренных',
+                           .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                           keyby = .(case = paste0('NOT Garant:Count active:', amount.of.active.credit.bch))])
+(t.iss.count.preapp0 <- cbind(mon.ago = -1, t.iss.count.preapp0))
+#### by bki.mon.last.active.creditopen
+(t.iss.count.preapp0.mon <- DT[dim.issued == 1 &
+                                 dim.preapproved == 'Без предодобренных',
+                               .(.N, 'was90%' = mean(was.ovd90.12m)*100),
+                               keyby = .(mon.ago = bki.mon.last.active.creditopen,
+                                         case = paste0('NOT Garant:Count active:', amount.of.active.credit.bch))])
+#### bind total & by mon.ago
+(t.iss.count.preapp0 <- rbindlist(list(t.iss.count.preapp0, t.iss.count.preapp0.mon))); rm(t.iss.count.preapp0.mon)
+
+#### bind missing mon.ago with NA's
+(dif <- setdiff(t.iss[, mon.ago], t.iss.count.preapp0[, unique(mon.ago)]))
+(dt <- data.frame(mon.ago = dif,
+                  case = sort(rep(t.iss.count.preapp0[, unique(case)],
+                                  length(dif))),
+                  stringsAsFactors = FALSE))
+t.iss.count.preapp0 <- rbindlist(list(t.iss.count.preapp0, dt), use.names = TRUE, fill = TRUE)
+rm(dif, dt)
+#### melt & cast 
+(t.iss.count.preapp0 <- t.iss.count.preapp0[order(mon.ago, case)])
+t.iss.count.preapp0[, N := as.character(prettyNum(N, big.mark = ' '))]
+t.iss.count.preapp0[, 'was90%' := sapply(.SD, function(x){as.character(round(x, 3))}), .SDcols = 'was90%']
+
+t.iss.count.preapp0 <- melt(t.iss.count.preapp0, id.vars = c('mon.ago', 'case'))
+tab.iss.count.preapp0 <- dcast(t.iss.count.preapp0, case + variable ~ mon.ago)
+### set names & order
+names(tab.iss.count.preapp0)
+setnames(tab.iss.count.preapp0, c('case', 'variable', 'total', 
+                                  paste0('mon.',
+                                         colnames(tab.iss.count.preapp0)[4:(length(colnames(tab.iss.count.preapp0))-1)]),
+                                  'NO.active'))
+names(tab.iss.count.preapp0)
+setcolorder(tab.iss.count.preapp0, c(1:3, length(colnames(tab.iss.count.preapp0)),
+                                     4:(length(colnames(tab.iss.count.preapp0))-1)
+))
+names(tab.iss.count.preapp0)
+identical(names(tab.iss), names(tab.iss.count.preapp0))
+rm(t.iss.count.preapp0)
+```
+
+```{r Plot: NOT Pred + COUNT, echo=FALSE, message=FALSE, warning=FALSE, fig.height = 6, fig.width = 12}
+## 2. Plot NOT PREAPPROVED: by COUNT of active credit
+### data
+pl.iss.count.preapp0 <- 
+  DT[dim.issued == 1 &
+       dim.preapproved == 'Без предодобренных', # Предодобренные Без предодобренных
+     .(.N, 'was90' = mean(was.ovd90.12m)*100),
+     keyby = .(mon.ago = bki.mon.last.active.creditopen,
+               case = paste0('', amount.of.active.credit.bch))
+     ][!is.na(mon.ago),
+       ][case != 'NA',
+         ][, case := as.integer(case)
+           ][, was90.cut := cut(was90, c(0, 1, 2, def, 5, 10, 20, 100),
+                                right = FALSE, include.lowest = TRUE)]
+#pl.iss.count.preapp0[, .(.N, mean(was90)), keyby = .(was90.cut)]
+
+### plot
+ggplot(pl.iss.count.preapp0, aes(x = mon.ago, y = case)) +
+  geom_tile(aes(fill = was90.cut), colour = 'white') +
+  scale_fill_manual(name = '%was90', 
+                    values = c('greenyellow', 'green', 'darkgreen',
+                               'tomato', 'red', 'darkred', 'gray0')) +
+  labs(title = '% was.ovd90.12m',
+       subtitle = 'НЕ Предодобренные :: Количество активных кредитов',
+       x = 'Месяцев, после открытия последнего активного кредита',
+       y = '# активных кредитов') +
+  theme(
+    plot.title = element_text(size = 12, face = 'bold'),
+    plot.subtitle = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    axis.text.x = element_text(size = 9),
+    axis.title.y = element_text(size = 10),
+    axis.text.y = element_text(size = 9),
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 9)
+  ) +
+  scale_y_continuous(breaks = seq(0, pl.iss.count.preapp0[, max(case, na.rm = TRUE)],
+                                  by = 1)) +
+  scale_x_continuous(breaks = seq(0, 102, by = 3), limits = c(-1, 102))
+```
+     
+```{r Print tab: NOT Pred + COUNT, echo=FALSE, message=FALSE, warning=FALSE}
+kable(tab.iss.count.preapp0[, names(tab.iss.count.preapp0)[1:17], with = FALSE],
+      format = 'html',
+      caption = paste('Кол-во выданных (N) и дефолт (was90%) по ним, по времени после открытия последнего активного кредита'),
+      #format.args = list(digits = 2),
+      col.names = c('Параметр', '~', 'Всего', ' в т.ч. НЕ имел активных',
+                    names(tab.iss.count.preapp0)[5:17])
+      ) %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'),
+                        font_size = 11)
+```
+  
+ 
+***
+###### *Отчёт подготовлен в среде R*

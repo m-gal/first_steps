@@ -1,0 +1,354 @@
+---
+title: "Credit history. Depth of delay viewing"
+output:
+  html_document: default
+  html_notebook: default
+---
+### ...
+#### **Глубина просмотра просрочки в кредитной истории заявителя**
+##### *Версия 1.1*
+
+###### *Галкин Михаил, дек.2017*
+***
+
+```{r loadLibrary, message=FALSE, warning=FALSE, include=FALSE}
+library(knitr)
+library(kableExtra)
+
+library(data.table)
+library(stringr)
+library(plot3D)
+library(ggplot2)
+```
+  
+  
+```{r loadData, message=FALSE, warning=FALSE, include=FALSE}
+rm(list=ls())
+gc()
+# BEG: LOAD DATA CASH
+  DT.depth <- fread(
+    '~/RProjects/201706-UnderOptim/UO.DepthDelay/DT_depth_CASH.csv', 
+    encoding = 'UTF-8')
+  DT.depth[, delay.depth := as.character(delay.depth)]
+# END: LOAD DATA
+  
+  # OR
+# BEG: LOAD DATA CARDS
+  DT.depth <- fread(
+    '~/RProjects/201706-UnderOptim/UO.DepthDelay/DT_depth_Cards.csv', 
+    encoding = 'UTF-8')
+  DT.depth[, delay.depth := as.character(delay.depth)]
+# END: LOAD DATA  
+  
+  
+```
+  
+  
+***Исходные данные:***  
+ Период : [03.01.2014 - 30.11.2017]  
+ Кол-во уникальных заявок: 405 652.  
+ 
+ в том числе:  
+   
++ Кредитные карты - 173 810 заявок  
++ Кредиты наличными - 231 842 заявок  
+  
++ Не предодобренных - 290 086 заявок  
++ Предодобренных - 115 566 заявок  
+  
++ Выданных -  214 636 заявок  
++ Отказанных -  191 016 заявок  
+  
+***
+***Техника анализа:***  
+
+1. Анализировались все заявки.  
+
+2. При анализе не учитывалось "аннулирование" негативной кредитной историей наличием у заёмщика свежих положительных кредитных историй.
+
+3. По каждой заявке смотрим паттерны платежей по каждому кредиту заёмщика, возвращённые БКИ при запросе КИ.    
+
+4. Каждый паттерн каждого кредита разбиваем на 4 периода по глубине просмотра:  
++ 0,5 года;  
++ 1 год;  
++ 1,5 года; 
++ 2 года (максимально возможный).  
+    
+    и считаем количество просрочек по каждой длительности:  
+  
++ 1 - 5 дней;  
++ 6 - 29 дней;  
++ 30 - 59 дней;  
++ 60 - 89 дней;  
++ 90 - 119 дней;  
++ 120+ дней.  
+    
+5. Суммируем количество просрочек по каждой длительности по всем кредитам заёмщика.  
+    
+6. В итоге получаем цифру вида:  
+  **Количество заявок**, у которых было **Х просрочек** длительностью **Y-Z дней** за последние **0.5 - 1 - 1.5 или 2 года**.   
+
+***  
+***  
+### Результат.
+На каждую глубину просмотра рисуем по 3 графика, но только по тем заявкам, **по которым была хотя бы 1 просрочка**:  
+
+1. **3D-Гистограмма**:  
+показывает количество заявок за анализируемый период в системе 3-х координат.  
+  
+2. **2D-Сетка**:  
+показывает то же что и 3D, только в координатах **Просрочка, кол-во** И **Просрочка, дней**:   
++ Ось **X** = **Длительность просрочки в днях** (показаны белым цветом в нижних горизонтальных ячейках) и ось **Y** = **Количество допущенных просрочек** (показаны белым цветом в левых вертикальных ячейках), соответственно.  
++ Цвет ячейки соответствует количеству заявок согласно температурной шкале легенды.  
++ Число (розовым) в верхнем правом углу ячейки - точное количество заявок.  
++ Процент (серым) под числом заявок - доля заявок в данной ячейке от общего числа заявок, у которых есть просрочки при данной глубине просмотра.  
++ Под красной границей находится зона "одобрения", над ней - зона "отказа".  
+  
+3. **Дельта**:  
+показывает разницу в количестве заявок с просрочками между текущей глубиной просмотра и предыдущей.  
++ Процент (красным) под числом - процентная разница между числом заявок в данной ячейке при текущей глубине просмотра от предыдущей.  
+
+*** 
+```{r plotShare, echo=FALSE, fig.height=15, fig.width=20, message=FALSE, warning=FALSE}
+##  1. Plot 3D histograms
+### create matrix
+#depth <- '0.5'
+
+slice <- c('0.5', '1', '1.5', '2')
+for (i in slice) {
+  depth <- i
+  z.dep <- as.matrix(DT.depth.horz[delay.depth == depth & delay.term != 'without',
+                             .(sum(n.1), sum(n.2), sum(n.3), sum(n.4), sum(n.5),
+                               sum(n.6), sum(n.7), sum(n.8), sum(n.9), sum(n10.)),
+                             by = .(delay.term)][order(delay.term)][, 2:11]
+  )
+  rownames(z.dep) <- c('1-5', '6-29', '30-59', '60-89', '90-119', '120+')
+  colnames(z.dep) <- c('1', '2', '3', '4', '5', '6', '7', '8', '9', '10+')
+  
+  z.not.delay <- DT.depth.horz[delay.depth == depth, sum(not)]
+  z.yes.delay <- DT.depth.horz[, length(unique(id.request))] - z.not.delay
+  
+  z.dep.approv <- sum((z.dep)[1:2, 1:3]) + sum((z.dep)[3, 1:2]) + sum((z.dep)[4, 1])
+
+    if (i != '0.5') {
+    
+    depth.prev <- slice[which(slice == i)-1]
+    
+    z.dep.prev <- as.matrix(DT.depth.horz[delay.depth == depth.prev & 
+                                            delay.term != 'without',
+                                          .(sum(n.1), sum(n.2), sum(n.3), sum(n.4), sum(n.5),
+                                            sum(n.6), sum(n.7), sum(n.8), sum(n.9), sum(n10.)),
+                                          by = .(delay.term)][order(delay.term)][, 2:11]
+                            )
+    rownames(z.dep.prev) <- c('1-5', '6-29', '30-59', '60-89', '90-119', '120+')
+    colnames(z.dep.prev) <- c('1', '2', '3', '4', '5', '6', '7', '8', '9', '10+')
+    
+    z.not.delay.prev <- DT.depth.horz[delay.depth == depth.prev, sum(not)]
+    
+    z.dep.approv.prev <- sum((z.dep.prev)[1:2, 1:3]) + sum((z.dep.prev)[3, 1:2]) +
+      sum((z.dep.prev)[4, 1])
+    
+    delta.approv <- z.dep.approv - z.dep.approv.prev
+    }
+  
+  
+## PLOT 3D HISTOGRAMM ##########################################################
+  cat(paste('При глубине просмотра =', depth, ifelse(depth == '1', 'год,','года,'),
+            'заявок, не имеющих ни одной просрочки, было', z.not.delay, 'штук.\nА',
+            z.yes.delay,
+            'заявок имели какую-либо просрочку. Их распределение выглядит так:'),
+      fill = FALSE, labels = ' ')
+
+      hist3D(x = 1:6, y = 1:10, z = z.dep,
+           main = paste('Глубина просмотра =', depth, ifelse(depth == '1', 'год','года')),
+           xlab = 'Просрочка, дн.', ylab = 'Просрочка, #', zlab = 'Заявки, #',
+           clab = c('Кол-во','заявок'),
+           bty = 'b2',
+           phi = 15,
+           theta = 130,
+           scale = TRUE,
+           border = 'black',
+           ticktype = 'detailed',
+           space = 0.4, 
+           d = 2,
+           cex.axis = 1e-9, 
+           cex.lab = 2.5,
+           cex.main = 4,
+           colkey = list(cex.axis = 1.5, cex.clab = 1.6)
+           )
+
+    ### Use text3D to label X axis
+    text3D(x = seq(1.2, 6.2, 1),
+           y = rep(11.75, 6),
+           z = rep(0, 6),
+           labels = rownames(z.dep),
+           add = TRUE,
+           adj = .5,
+           cex = 1.5)
+
+    # Use text3D to label Y axis
+    text3D(x = rep(7, 10),
+           y = seq(1.2, 10.2, 1),
+           z = rep(0, 10),
+           labels  = colnames(z.dep),
+           add = TRUE,
+           cex = 1.5)
+
+    # Use text3D to label Z axis
+    text3D(x = rep(7, round(max(z.dep)/5000) + 1),
+           y = rep(0, round(max(z.dep)/5000) + 1),
+           z = seq(0, round(max(z.dep)/5000)*5000, 5000),
+           labels  = paste0(seq(0, round(max(z.dep)/5000)*5000, 5000)/1000, 'k'),
+           add = TRUE,
+           cex = 1.5)
+
+
+## PLOT 2D GRID ################################################################    
+  cat(paste('То есть, в этом случае, фильтр по кредитной истории потенциально проходило',
+            z.not.delay, '+', z.dep.approv, '=', z.not.delay + z.dep.approv, 'заявок.\n',
+            '*', z.dep.approv, 
+            ' - это число заявок в зоне одобрения на рисунке ниже.'),
+      fill = FALSE, labels = ' ')
+    
+    
+  image2D(x = 1:6, y = 1:10, z = z.dep,
+          #main = paste('Глубина просмотра =', depth, 'года'),
+          xlab = 'Просрочка, дн.', ylab = 'Просрочка, #',
+          #clab = c('Кол-во','заявок'),
+          cex.axis = 1e-9,
+          border = 'black',
+          cex.lab = 1.55,
+          colkey = list(cex.axis = 1.5))
+  segments(x0 = 4.5, y0 = 0, x1 = 4.5, y1 = 1.5,
+           col = 'red', lwd = 10)
+  segments(x0 = 4.5, y0 = 1.5, x1 = 3.5, y1 = 1.5,
+           col = 'red', lwd = 10)
+  segments(x0 = 3.5, y0 = 1.5, x1 = 3.5, y1 = 2.5,
+           col = 'red', lwd = 10)
+  segments(x0 = 3.5, y0 = 2.5, x1 = 2.5, y1 = 2.5,
+           col = 'red', lwd = 10)  
+  segments(x0 = 2.5, y0 = 2.5, x1 = 2.5, y1 = 3.5,
+           col = 'red', lwd = 10)
+  segments(x0 = 2.5, y0 = 3.5, x1 = 0, y1 = 3.5,
+           col = 'red', lwd = 10) 
+
+  ### Use text3D to label count
+  text2D(x = rep(seq(1.25, 6.25, 1), 10),
+         y = rep(seq(1.25, 10.25, 1), rep(6, 10)),
+         labels = z.dep,
+         col = 'magenta',
+         add = TRUE,
+         cex = 3)
+
+    ### Use text2D to label %% count
+    text2D(x = rep(seq(1.3, 6.3, 1), 10),
+           y = rep(seq(0.9, 9.9, 1), rep(6, 10)),
+           labels = paste0(round(z.dep/z.yes.delay*100, 2),'%'),
+           col = 'gray',
+           add = TRUE,
+           cex = 2.5)
+
+  # Use text3D to label Y axis
+  text2D(x = rep(0.7, 10),
+         y = seq(1, 10, 1),
+         labels  = colnames(z.dep),
+         col = 'white',
+         add = TRUE,
+         cex = 3)
+
+  # Use text3D to label X axis
+  text2D(x = seq(0.8, 5.8, 1),
+         y = rep(0.7, 6),
+         labels  = rownames(z.dep),
+         col = 'white',
+         add = TRUE,
+         cex = 3)
+  
+  
+## PLOT DIFFERENCE BY PREVIOUS DEPTH ###########################################  
+  if (i != '0.5') {
+
+  cat(paste('Таким образом, если уменьшить глубину просмотра на полгода, с',
+            depth, ifelse(depth %in% c('0.5', '1'), 'года,','лет,'), 'до',
+            depth.prev, ifelse(depth.prev %in% c('0.5', '1'), 'года,','лет,'),
+            'то, количество заявок, прошедших фильтр по кредитной истории, могло бы изменится c',
+            (z.not.delay + z.dep.approv), 'до', (z.not.delay.prev + z.dep.approv.prev), 'на',
+            (z.not.delay + z.dep.approv) - (z.not.delay.prev + z.dep.approv.prev), 'штук или на',
+            round(((z.not.delay + z.dep.approv) - (z.not.delay.prev + z.dep.approv.prev))/
+              (z.not.delay + z.dep.approv) * 100, 2), '%.'),
+      fill = FALSE, labels = ' ')
+    
+    
+  image2D(x = 1:6, y = 1:10, z = (z.dep - z.dep.prev),
+          main = paste('Дельта заявок с просрочками, в сравнении с глубиной ',
+                       depth.prev,
+                       ifelse(depth.prev == '1', 'год','года')),
+          col = gray.colors(60, start = 0.9, end = 0.3, gamma = 2.2, alpha = NULL), 
+          xlab = 'Просрочка, дн.', ylab = 'Просрочка, #',
+          clab = c('Кол-во'),
+          cex.axis = 1e-9,
+          border = 'black',
+          cex.main = 3,
+          cex.sub = 3,
+          cex.lab = 1.55,
+          colkey = list(cex.axis = 1.55, cex.clab = 2)
+          )
+  segments(x0 = 4.5, y0 = 0, x1 = 4.5, y1 = 1.5,
+           col = 'red', lwd = 9)
+  segments(x0 = 4.5, y0 = 1.5, x1 = 3.5, y1 = 1.5,
+           col = 'red', lwd = 9)
+  segments(x0 = 3.5, y0 = 1.5, x1 = 3.5, y1 = 2.5,
+           col = 'red', lwd = 9)
+  segments(x0 = 3.5, y0 = 2.5, x1 = 2.5, y1 = 2.5,
+           col = 'red', lwd = 9)  
+  segments(x0 = 2.5, y0 = 2.5, x1 = 2.5, y1 = 3.5,
+           col = 'red', lwd = 9)
+  segments(x0 = 2.5, y0 = 3.5, x1 = 0, y1 = 3.5,
+           col = 'red', lwd = 9) 
+ 
+  ### Use text3D to label count
+  text2D(x = rep(seq(1.25, 6.25, 1), 10),
+         y = rep(seq(1.25, 10.25, 1), rep(6, 10)),
+         labels = (z.dep - z.dep.prev),
+         col = 'blue',
+         add = TRUE,
+         cex = 3)
+  
+  ### Use text2D to label %% count
+  text2D(x = rep(seq(1.2, 6.2, 1), 10),
+         y = rep(seq(0.9, 9.9, 1), rep(6, 10)),
+         labels = paste0(round((z.dep - z.dep.prev)/z.dep*100, 2),'%'),
+         col = 'red3',
+         add = TRUE,
+         cex = 2.3)
+  
+  # Use text3D to label Y axis
+  text2D(x = rep(0.7, 10),
+         y = seq(1, 10, 1),
+         labels  = colnames(z.dep),
+         col = 'white',
+         add = TRUE,
+         cex = 3)
+  
+  # Use text3D to label X axis
+  text2D(x = seq(0.8, 5.8, 1),
+         y = rep(0.7, 6),
+         labels  = rownames(z.dep),
+         col = 'white',
+         add = TRUE,
+         cex = 3)
+  }
+  
+  cat()
+  cat (sep = '\n\n', fill = TRUE)
+  cat()
+  
+  }; rm(slice, i, depth, z.dep, z.not.delay, z.yes.delay, z.dep.approv,
+        depth.prev, z.dep.prev, z.not.delay.prev, z.dep.approv.prev, delta.approv)
+# END: Plots -------------------------------------------------------------------
+
+```
+
+
+***
+
