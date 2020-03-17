@@ -1,0 +1,615 @@
+---
+title: "Assignment"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+---
+#### **Binary classification (prediction).**
+
+###### *Mikhail Galkin, 2018.may*
+***
+
+```{r loadLibrary, message=FALSE, warning=FALSE, include=FALSE}
+library(knitr)
+library(kableExtra)
+
+# Load libraries
+library(data.table)
+library(Hmisc)
+library(lubridate)
+library(caret)
+library(xgboost)
+library(Matrix)
+library(DMwR)
+```
+
+
+#### Loading data and doing first view on it.  
+```{r loadData, fig.width=12, fig.height=10, message=FALSE, warning=FALSE}
+## Load data
+DT <- read.csv(file = "T:\\Documents\\RProjects\\Assignment\\Assignment_Data.csv",
+               header = TRUE, sep = ';', stringsAsFactors = FALSE,
+               na.strings = c('NULL', 'NA', 'N/A','', '?'))
+class(DT)  # view class
+DT <- as.data.table(DT)  # convert to data.table
+
+## View summary info
+str(DT)  # view structure & ...
+
+## View some add info about features
+describe(DT[, .SD, .SDcols = DT[, sapply(.SD, class)] == 'numeric'])
+describe(DT[, .SD, .SDcols = DT[, sapply(.SD, class)] == 'integer'
+            ][, c('Variable_19', 'Variable_21', 'Variable_26', 'Variable_29')])
+describe(DT[, .SD, .SDcols = DT[, sapply(.SD, class)] == 'character'
+            ][,c('Variable_5', 'Variable_13', 'Variable_14', 'Variable_45')])
+
+### View maps of missing value
+suppressWarnings(
+  Amelia::missmap(DT,
+                  main = 'Missing values in initial dataset'))
+```
+ 
+*** 
+  
+#### Primary data processing:  
+* Find columns with all NA's.  
+* Delete columns with only one unique value.  
+* Find and delete "like ID"s-columns with all unique value.  
+* Find 'Date-Time' column, parse it and split in new features as:  
+    + Year,  
+    + Month of year,  
+    + Day of year,  
+    + Day of week,  
+    - Hour,  
+    - Minute,  
+    - Second.  
+* Coerce characters to factors.  
+```{r preprocessingData, echo=TRUE, results='hide'}
+## Find cols with all NA's
+describe(DT[, .SD,
+            .SDcols = names(DT)[sapply(DT,
+                                       function(x) {
+                                         all(is.na(x))
+                                       })]])
+
+##  Find cols with only 1 unique value
+describe(DT[, .SD,
+            .SDcols = names(DT)[sapply(DT,
+                                       function(x) {
+                                         length(unique(x)) == 1 &
+                                           sum(is.na(x)) == 0
+                                       })]])
+### get names of cols with only value
+(x.only <- names(DT)[sapply(DT,
+                            function(x) {
+                              length(unique(x)) == 1 &
+                                sum(is.na(x)) == 0
+                            })])
+### del cols with only 1 unique value
+DT[, c(x.only) := NULL]
+
+##  Find cols with all unique value (like ID)
+describe(DT[, .SD,
+            .SDcols = names(DT)[sapply(DT,
+                                       function(x) {
+                                         length(unique(x)) == length(x) &
+                                           sum(is.na(x)) == 0
+                                       })]])
+### get names of cols cols with all (not NA's & unique value)
+(x.all <- names(DT)[sapply(DT,
+                           function(x) {
+                             length(unique(x)) == length(x) &
+                               sum(is.na(x)) == 0
+                           })])
+### del cols with all (not NA's & unique value)
+DT[, c(x.all) := NULL]
+
+## Find fields names that's have DATE value
+(x.date <- names(DT)[ sapply(DT,
+                             function(x) {
+                               !all(
+                                 is.na(
+                                   grep("^\\d{2,4}[-./]\\d{2}[-./]\\d{2,4}", x)
+                                 ))})])
+
+## Find fields names that's have TIME value
+(x.time <- names(DT)[ sapply(DT,
+                             function(x) {
+                               !all(
+                                 is.na(
+                                   grep("^\\d{2}[:]\\d{2}[:]\\d{2}", x)
+                                 ))})])
+
+## Split <arrived_date> on date and time
+DT[, ':='(arrived_time = substr(arrived_date, 12, 17),  # get arrived time
+          arrived_date = substr(arrived_date, 1, 10)    # get arrived date
+)]
+x.time <- c(x.time, 'arrived_time')  # add
+
+## Parse date\time params & add new cols with it
+DT[, ':='(due_date_year  = year(dmy(due_date)),  # parse year from <due_date>
+          due_date_month = month(dmy(due_date)), # parse month
+          due_date_day   = day(dmy(due_date)),   # parse day of month
+          due_date_wday  = wday(dmy(due_date)),  # parse day of week
+
+          first_status_day_date_year  = year(dmy(first_status_day_date)),  # parse year
+          first_status_day_date_month = month(dmy(first_status_day_date)), # parse month
+          first_status_day_date_day   = day(dmy(first_status_day_date)),   # parse day of month
+          first_status_day_date_wday  = wday(dmy(first_status_day_date)),  # parse day of week
+
+          paid_date_year  = year(dmy(paid_date)),  # parse year from <paid_date>
+          paid_date_month = month(dmy(paid_date)), # parse month
+          paid_date_day   = day(dmy(paid_date)),   # parse day of month
+          paid_date_wday  = wday(dmy(paid_date)),  # parse day of week
+
+          arrived_date_year  = year(dmy(arrived_date)),  # parse year from <arrived_date>
+          arrived_date_month = month(dmy(arrived_date)), # parse month
+          arrived_date_day   = day(dmy(arrived_date)),   # parse day of month
+          arrived_date_wday  = wday(dmy(arrived_date)),  # parse day of week
+
+          Variable_42_year  = year(dmy(Variable_42)),  # parse year from <Variable_42>
+          Variable_42_month = month(dmy(Variable_42)), # parse month
+          Variable_42_day   = day(dmy(Variable_42)),   # parse day of month
+          Variable_42_wday  = wday(dmy(Variable_42)),  # parse day of week
+
+          Variable_43_year  = year(dmy(Variable_43)),  # parse year from <Variable_43>
+          Variable_43_month = month(dmy(Variable_43)), # parse month
+          Variable_43_day   = day(dmy(Variable_43)),   # parse day of month
+          Variable_43_wday  = wday(dmy(Variable_43)),  # parse day of week
+
+          Variable_44_year  = year(dmy(Variable_44)),  # parse year from <Variable_44>
+          Variable_44_month = month(dmy(Variable_44)), # parse month
+          Variable_44_day   = day(dmy(Variable_44)),   # parse day of month
+          Variable_44_wday  = wday(dmy(Variable_44)),  # parse day of week
+
+          first_status_time_of_day_hour  = hour(hms(first_status_time_of_day)),    # parse hour
+          first_status_time_of_day_min   = minute(hms(first_status_time_of_day)),  # parse minute
+          first_status_time_of_day_sec   = second(hms(first_status_time_of_day)),  # parse second
+
+          arrived_time_hour  = hour(hm(arrived_time)),    # parse hour
+          arrived_time_min   = minute(hm(arrived_time))  # parse minute
+)]
+
+### del early parsed date\time columns
+DT[, c('due_date', 'first_status_day_date', 'paid_date', 'arrived_date',
+       'Variable_42', 'Variable_43', 'Variable_44', 'first_status_time_of_day',
+       'arrived_time') := NULL]
+
+### coerce chars to factors
+(x.char <- names(DT)[DT[, sapply(.SD, class)] == 'character'])
+describe(DT[, .SD, .SDcols = DT[, sapply(.SD, class)] == 'character'])
+DT[, (x.char) := lapply(.SD, as.factor), .SDcols = (x.char)]
+
+### del useless values
+rm(x.all, x.date, x.time, x.only, x.char)
+```
+ 
+*** 
+  
+#### Creating indexes.  
+Create indexes for cross-validation, training and testing models and for the set should to be predicted
+```{r createIndx, echo=TRUE, results='hide'}
+## create outcome vector for learning
+y <- DT[, as.numeric(Target)]
+
+## set up train and test indexs
+set.seed(1414)
+# row indexes of data for final prediction
+idx.final.pred <- DT[is.na(Target), which = TRUE]
+# row indexes of data for cross-validation and fitting final model
+idx.cv <- DT[!idx.final.pred, which = TRUE]
+# row indexes of data for fit model
+idx.cv.train <- sort(sample(idx.cv, length(idx.cv)*.8, replace = FALSE))
+# row indexes of data for test model
+idx.cv.test <- idx.cv[-idx.cv.train]
+```
+ 
+*** 
+  
+#### Defining most important features.  
+With XGBoost define most important features, which explain 99%, and pickup it's.  
+```{r impFeatures, echo=TRUE, results='hide'}
+## Create xgb matrix
+xgb.impt.X <- xgb.DMatrix(as.matrix(DT[idx.cv,
+                                       lapply(.SD, as.numeric),
+                                       .SDcols = !c('Target')]),
+                          label = y[idx.cv])
+
+## Define params for xgboost
+xgb.impt.params <- list(booster = 'gbtree',
+                        eta = .05,
+                        gamma = 0,
+                        max_depth = 3,
+                        min_child_weight = 1,
+                        objective = 'binary:logistic',
+                        eval_metric = 'error')
+
+## Fit the mogel XGB
+set.seed(1414)
+xgb.impt.fit <- xgb.train(data = xgb.impt.X,
+                          params = xgb.impt.params,
+                          nrounds = 100,
+                          verbose = 1,
+                          print_every_n = 5,
+                          watchlist = list(train = xgb.impt.X))
+```
+
+```{r impFeaturesPlot, echo=TRUE}
+## View features importantce
+xgb.ggplot.importance(xgb.importance(colnames(xgb.impt.X),
+                                     model = xgb.impt.fit)) +
+  ggplot2::ggtitle('Target ~ All features',
+                   subtitle = 'Feature importance by XGBoost') +
+  ggplot2::theme(plot.title = element_text(size = 10, face = "bold"),
+                 axis.text.y = element_text(size = 7.5)) +
+  ggplot2::aes(width = .7)
+```
+
+```{r impFeaturesMod, echo=TRUE, results='hide'}
+## Get 99% important features names
+x.imp.99 <- xgb.importance(colnames(xgb.impt.X),
+                            model = xgb.impt.fit)[cumsum(Gain)<=.99,
+                                                  Feature]
+
+## Make sure that the model quality does not fall on important features
+### Create matrix for fit model only by important features
+xgb.impt.X.99 <- xgb.DMatrix(as.matrix(DT[idx.cv,
+                                          lapply(.SD, as.numeric),
+                                          .SDcols = x.imp.99]),
+                             label = y[idx.cv])
+### fit the mogel on important features
+set.seed(1414)
+xgb.impt.fit.99 <- xgb.train(data = xgb.impt.X.99,
+                             params = xgb.impt.params,
+                             nrounds = 100,
+                             verbose = 1,
+                             print_every_n = 5,
+                             watchlist = list(train = xgb.impt.X.99))
+```
+
+```{r impFeaturesRes, message=FALSE, warning=FALSE}
+### view errors
+data.frame(Min_error_onAall_features =
+             min(xgb.impt.fit$evaluation_log$train_error),
+           Min_error_onImportant_features =
+             min(xgb.impt.fit.99$evaluation_log$train_error))
+
+## View maps of missing value in selected important features
+suppressWarnings(
+  Amelia::missmap(DT[, c(x.imp.99, 'Target'), with = FALSE],
+                  main = 'Missing values in important features'))
+```
+
+```{r impFeaturesEnd, include=FALSE}
+## Create data set with important features
+DT.99 <- copy(DT[, c(x.imp.99, 'Target'), with = FALSE])
+
+### del useless values
+rm(xgb.impt.X, xgb.impt.X.99, xgb.impt.fit, xgb.impt.fit.99, xgb.impt.params)
+# END: Define important features via XGBoost -----------------------------------
+```
+ 
+*** 
+  
+#### Processing important features.  
+Delete from important features those, thats have more than 75% missing value.
+After, by bagging modelling, impute missing values in dataset, since some algorithms can not work with missing data.   
+```{r imputeMiss}
+## Get names of important features that has more than 75% missing value
+(x.na.75 <- colnames(DT.99)[sapply(DT.99,
+                                   function(x){
+                                     sum(is.na(x))/length(x) > .75})])
+
+## Del thats features (x.na.75) from dataset
+DT.99.75 <- DT.99[, !c(x.na.75), with = FALSE]
+
+## Impute missing values by bagging
+### coerce to numeric
+DT.99.75 <- DT.99.75[, lapply(.SD, as.numeric)]
+### fit imputing bagging model for missing values
+pPbI <- preProcess(DT.99.75[, -c('Target'), with = FALSE],
+                   method = 'bagImpute')
+### predict & impute missing value
+DT.99.75.imput <- predict(pPbI, DT.99.75[, -c('Target'), with = FALSE])
+### view result
+suppressWarnings(
+  Amelia::missmap(DT.99.75.imput,
+                  main = 'Missing values after bagging-imputation'))
+```
+
+```{r imputeMissEnd, include=FALSE}
+### del useless values
+rm(x.na.75, DT.99.75, pPbI)
+```
+ 
+*** 
+  
+#### Selection the model for final prediction.  
+With cross-validation, fit the different models:  
+    * K-nearest neighbors algorithm,  
+    * Logistic regression,  
+    * Support vector machine,  
+    * Extreme gradient boosting trees,  
+    * Naive Bayesian classifier,  
+  
+on important features dataset with imputed NA's.  
+Than compare errors of these models and select a model, which be used as final for prediction.  
+```{r cvDefineMod, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+## Set training scheme for cross-validation
+train.cv.ctrl <- trainControl(method = 'cv',        # method of cross-validation
+                              number = 5,           # folds
+                              verboseIter = TRUE,
+                              allowParallel = TRUE,
+                              classProbs = TRUE,
+                              summaryFunction = twoClassSummary,
+                              savePredictions = TRUE)
+
+## Train KNN model
+set.seed(1414)
+knn.cv.fit <- train(x = DT.99.75.imput[idx.cv, ],
+                    y = factor(y[idx.cv], labels = c('no', 'yes')),
+                    method = 'knn',
+                    preProcess = c('center', 'scale'),
+                    trControl = train.cv.ctrl,
+                    metric = 'ROC')
+
+## Train the Logistic Regression model
+set.seed(1414)
+lg.cv.fit <- train(x = DT.99.75.imput[idx.cv, ],
+                   y = factor(y[idx.cv], labels = c('no', 'yes')),
+                   method = 'glm',
+                   family = binomial(),
+                   trControl = train.cv.ctrl,
+                   metric = 'ROC')
+
+## Train the SVM model
+set.seed(1414)
+svm.cv.fit <- train(x = DT.99.75.imput[idx.cv, ],
+                    y = factor(y[idx.cv], labels = c('no', 'yes')),
+                    method = 'svmRadial',
+                    trControl = train.cv.ctrl,
+                    metric = 'ROC')
+
+## Train the xgbTree model
+set.seed(1414)
+xgb.cv.fit <- train(x = DT.99.75.imput[idx.cv, ],
+                    y = factor(y[idx.cv], labels = c('no', 'yes')),
+                    method = 'xgbTree',
+                    trControl = train.cv.ctrl,
+                    metric = 'ROC')
+
+## Train the Naive Bayes model
+nb.cv.fit <- train(x = DT.99.75.imput[idx.cv, ],
+                   y = factor(y[idx.cv], labels = c('no', 'yes')),
+                   method = 'nb',
+                   trControl = train.cv.ctrl,
+                   metric = 'ROC')
+```
+
+```{r cvDefineModRes, echo=TRUE, warning=FALSE}
+## Collect resamples & view results
+results.cv <- resamples(list(KNN = knn.cv.fit,
+                             LogReg = lg.cv.fit,
+                             SVM = svm.cv.fit,
+                             XGB = xgb.cv.fit,
+                             NaiveBayes = nb.cv.fit))
+summary(results.cv)
+bwplot(results.cv)
+dotplot(results.cv)
+```
+
+```{r cvDefineModEnd, warning=FALSE, include=FALSE}
+### del useless values
+rm(knn.cv.fit, lg.cv.fit, nb.cv.fit, svm.cv.fit, xgb.cv.fit, DT.99.75.imput)
+```
+
+The large gap between sensitivity and specificity is probably due to some imbalance Target in the data.  
+Looking at the ROC, choose the XGBtrees model. And the gap between sensitivity and specificity will later be compensated by balancing the data set.
+ 
+*** 
+  
+#### Balansing data.  
+With SMOTE-approach (Synthetic Minority Over-sampling Technique), using over-sampling and under-sampling create new balanced dataset with important features for fitting final model.  
+```{r smote, warning=FALSE, include=FALSE}
+## Balansing data in dataset with important features
+### create copy of dataset & coerco outcome to factor
+DT.99.copy <- copy(DT.99)
+DT.99.copy[, Target := factor(Target)]
+
+### split before balancing on train & final predict sets
+### set that will be balanced
+DT.99.cv <- copy(DT.99.copy[idx.cv, ])
+### dataset with unknown Target and that will be predicted
+DT.99.final.pred <- copy(DT.99.copy[idx.final.pred, ])
+```
+
+```{r smoteFit, echo=TRUE, results='hide', warning=FALSE}
+set.seed(1414)
+## With SMOTE function make balance
+DT.99.cv.balanced <- SMOTE(Target ~.,
+                           DT.99.cv,
+                           perc.over = 300,
+                           perc.under = 134,
+                           k = 5)
+```
+
+```{r smoteRes, echo=FALSE, warning=FALSE}
+## View before & after balancing proportions of outcomes in train set
+tab.prop <- data.frame(
+  prop.table(table(DT.99.cv[, Target])) * 100,
+  table(DT.99.cv[, Target]),
+  prop.table(table(DT.99.cv.balanced[, Target])) * 100,
+  table(DT.99.cv.balanced[, Target])
+  )[, -c(3, 5, 7)]
+colnames(tab.prop) <- c('Target', 'Original_freq',  'Original_count',
+                        'Balanced_freq',  'Balanced_count')
+tab.prop
+```
+
+```{r smoteEnd, warning=FALSE, include=FALSE}
+### del useless values
+rm(DT.99.copy)
+```
+ 
+*** 
+  
+#### Tuning hyperparams for our XGB model.  
+By 5-folds cross-validation fit xgb-models on balanced dataset. And then check the accuracy of prediction on using splited balanced data on train and test sets.  
+  
+Find optimal hyperparametrs for model:
+```{r cvHypGrid, eval=FALSE, echo=TRUE}
+## Params grid for tuning XGBoost hyperparams by CARET
+xgb.cv.grid <- expand.grid(nrounds = seq(100, 1000, by = 300),
+                           max_depth = seq(1, 7, by = 2),
+                           eta =  c(.005, .01, .05, .1),
+                           gamma = 0,
+                           min_child_weight = c(1, 3, 5),
+                           colsample_bytree = c(0.8, 1),
+                           subsample = c(0.8, 1))
+
+## Train models by CARET on CV for defining hyperparams
+xgb.cv.balanced.tune <- train(x = as.matrix(
+                                    DT.99.cv.balanced[ ,
+                                        lapply(.SD, as.numeric),
+                                        .SDcols = !c('Target')]),
+                              y = factor(DT.99.cv.balanced[, Target],
+                                         labels = c('no', 'yes')),
+                              method = 'xgbTree',
+                              trControl = train.cv.ctrl,
+                              tuneGrid = xgb.cv.grid,
+                              metric = 'ROC')
+```
+  
+Split our balanced data, and with optimal hyperparametrs train model and view Accuracy on test set:
+```{r cvHypCheck, echo=TRUE, results='hide', warning=FALSE}
+## Set train & test indexes for balanced dataset
+set.seed(1414)
+idx.train.balanced <- sort(sample(seq(1, DT.99.cv.balanced[, .N]),
+                                  DT.99.cv.balanced[, .N] * .8,
+                                  replace = FALSE))
+idx.test.balanced <- seq(1, DT.99.cv.balanced[, .N])[-idx.train.balanced]
+
+## Create xgbMatrix for train model on balansed set and with tuned params
+xgb.train.X.99.balanced <- xgb.DMatrix(
+  as.matrix(DT.99.cv.balanced[idx.train.balanced,
+                              lapply(.SD, as.numeric),
+                              .SDcols = !c('Target')]),
+  label = as.numeric(DT.99.cv.balanced[idx.train.balanced,
+                                       Target])-1)
+xgb.test.X.99.balanced <-  xgb.DMatrix(
+  as.matrix(DT.99.cv.balanced[idx.test.balanced,
+                              lapply(.SD, as.numeric),
+                              .SDcols = !c('Target')]),
+  label = as.numeric(DT.99.cv.balanced[idx.test.balanced,
+                                       Target])-1)
+
+## Tuned by CARET params for XGB model
+xgb.train.params.balanced <- list(booster = 'gbtree',
+                                  max_delta_step = 0,
+                                  eta = .05,
+                                  gamma = 0,
+                                  max_depth = 7,
+                                  min_child_weight = 1,
+                                  subsample = 0.8,
+                                  colsample_bytree = 1,
+                                  num_parallel_tree = 1,
+                                  objective = 'binary:logistic',
+                                  eval_metric = 'error')
+
+## Train the mogel with tuned params on train balanced subset
+set.seed(1414)
+xgb.train.X.99.balanced.fit <- xgb.train(data = xgb.train.X.99.balanced,
+                                         params = xgb.train.params.balanced,
+                                         nrounds = 1000,
+                                         verbose = 1,
+                                         print_every_n = 50,
+                                         watchlist = list(train = xgb.train.X.99.balanced,
+                                                          test = xgb.test.X.99.balanced))
+```
+
+```{r cvHypAcc, echo=TRUE, warning=TRUE}
+##  View confusion matrix on test set
+confusionMatrix(
+  as.factor(
+    ifelse(
+      predict(object = xgb.train.X.99.balanced.fit,
+              newdata = xgb.test.X.99.balanced) >= .5, 1, 0)),
+  as.factor(as.numeric(DT.99.cv.balanced[idx.test.balanced,
+                                         Target])-1))
+```
+
+```{r cvHypEnd, warning=FALSE, include=FALSE}
+### del useless values
+rm(xgb.cv.grid, xgb.cv.balanced.tune, idx.train.balanced, idx.test.balanced,
+   xgb.train.X.99.balanced, xgb.test.X.99.balanced, xgb.train.X.99.balanced.fit)
+```
+The accuracy indicator looks good.
+In addition, the gap between the sensitivity and specificity disappeared. 
+  
+***  
+  
+#### Final.  
+Train final tuned model.
+```{r finTrain, echo=TRUE, results='hide'}
+## Create xgbMatrix for train final model
+xgb.X.99.final.balanced <- xgb.DMatrix(
+  as.matrix(DT.99.cv.balanced[ ,
+                               lapply(.SD, as.numeric),
+                               .SDcols = !c('Target')]),
+  label = as.numeric(DT.99.cv.balanced[ ,
+                                        Target])-1)
+
+## Train the final mogel with tuned params on final train set
+set.seed(1414)
+xgb.final.balanced.fit <- xgb.train(data = xgb.X.99.final.balanced,
+                                    params = xgb.train.params.balanced,
+                                    nrounds = 1000,
+                                    verbose = 1,
+                                    print_every_n = 50,
+                                    watchlist = list(train = xgb.X.99.final.balanced))
+```
+  
+Make prediction.
+```{r finPred, echo=TRUE, warning=FALSE}
+## FINAL PREDICTION
+### Create xgb Matrix witn unknown data for prediction
+xgb.X.final.pred <- xgb.DMatrix(
+  as.matrix(DT.99.final.pred[ ,
+                            lapply(.SD, as.numeric),
+                            .SDcols = !c('Target')]),
+  label = as.numeric(DT.99.final.pred[ ,
+                                      Target])-1)
+### PREDICTION
+prob.final.pred <- as.numeric(
+  predict(object = xgb.final.balanced.fit,
+          newdata = xgb.X.final.pred))
+```
+
+```{r finProp, echo=FALSE, warning=FALSE}
+#### view proportions predicted Target
+tab.prop.target <-data.frame(
+  prop.table(table(y[idx.cv])) * 100,
+  table(y[idx.cv]),
+  prop.table(table(ifelse(prob.final.pred >= .5, 1, 0))) * 100,
+  table(ifelse(prob.final.pred >= .5, 1, 0))
+  )[, -c(3, 5, 7)]
+colnames(tab.prop.target) <- c('Target', 'Original_freq',  'Original_count',
+                               'Predicted_freq',  'Predicted_count')
+tab.prop.target
+```
+  
+The distribution of the predicted values looks similar to the known values in the original data set.
+
+```{r finSave, echo=TRUE, results='hide'}
+## SAVE PREDICTED PROBABILITY VECTOR
+fwrite(as.list(prob.final.pred), 'GalkinM_Predicted.csv', sep = ';')
+```
+ 
+*** 
+  
+#### Done.
+
+
