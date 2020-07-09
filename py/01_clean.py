@@ -62,18 +62,6 @@ Created on Dec 02 2019
 #                    ** unknown (last loan is 'good')   := -1
 #                    ** actual loan is 'bad'            := 0
 #                    ** number of loans before default  := interger
-### Remove:
-#### 1. [X] Remove needless & separate redundant columns:
-#      1.1 [X] ['id_ec', 'id_nc', 'id_origin_guid', 'id_source']
-#      1.2 [X] some early shifted 'act_...' to 'last_..' variables
-#      1.3 [X] ['last_score', 'last_score_amount', 'last_score_class']
-#### 2. [X] Group the columns
-#      2.1 [X] informating columns: ['id's, 'customer_type',
-#                                  'first_status_day_date',
-#                                  'act_loan_amount', 'act_loan_numinstal',
-#                                  'act_dpd', 'act_profit']
-#      2.2 [X] set columns' order
-#### 3. [X] Remove data w\o credit bureau scores up to '2018-07-01'
 
 
 #%% Load libraries for timing
