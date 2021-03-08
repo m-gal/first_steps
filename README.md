@@ -1,3 +1,4 @@
-# Code samples
+# First steps...
 
-This repository contains bit of samples of my old codes and reports to reflect my prof pathway.
+This repository contains bit of examples of my old codes and reports to reflect
+my some first steps on prof pathway.
